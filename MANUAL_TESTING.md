@@ -17,7 +17,7 @@
 CSG_PORT=4000
 CSG_LOG_LEVEL=info
 
-# Encryption Key (本番環境では強力なキーを使用)
+# Encryption Key (必須: 設定しない場合はエラーで起動しません)
 CSG_ENCRYPTION_KEY=your-secure-encryption-key-here
 
 # OpenAI OAuth Configuration

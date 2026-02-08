@@ -158,4 +158,18 @@ describe('TokenStore', () => {
             expect(tokenStore.isTokenValid(tokenData)).toBe(true);
         });
     });
+
+    describe('constructor enforcement', () => {
+        it('should throw error if key is missing', () => {
+            expect(() => new TokenStore(undefined)).toThrow('Fatal: Secure encryption key not configured.');
+        });
+
+        it('should throw error if key is default value', () => {
+            expect(() => new TokenStore('default-key-change-me')).toThrow('Fatal: Secure encryption key not configured.');
+        });
+
+        it('should not throw if key is provided', () => {
+            expect(() => new TokenStore('secure-key')).not.toThrow();
+        });
+    });
 });

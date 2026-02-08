@@ -1,3 +1,4 @@
+import { createParser, type EventSourceMessage } from 'eventsource-parser';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { ProviderError, TranspilerError } from '../utils/errors.js';
@@ -227,68 +228,6 @@ export class GoogleTranspiler {
     /**
      * Convert Google SSE stream to Anthropic format
      */
-    /**
-     * Process a single line of SSE data from Google
-     */
-    private async *processSSELine(line: string): AsyncGenerator<string> {
-        if (!line.trim() || line.startsWith(':')) return;
-
-        if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            try {
-                const parsed = JSON.parse(data);
-                const candidates = parsed.candidates;
-
-                if (candidates && candidates.length > 0) {
-                    const content = candidates[0].content;
-                    const parts = content?.parts;
-
-                    if (parts && parts.length > 0 && parts[0].text) {
-                        // Emit content_block_delta
-                        yield `event: content_block_delta\ndata: ${JSON.stringify({
-                            type: 'content_block_delta',
-                            index: 0,
-                            delta: {
-                                type: 'text_delta',
-                                text: parts[0].text
-                            }
-                        })}\n\n`;
-                    }
-
-                    // Check for finish reason
-                    if (candidates[0].finishReason) {
-                        const stopReason = this.mapFinishReason(candidates[0].finishReason);
-
-                        // Emit content_block_stop
-                        yield `event: content_block_stop\ndata: ${JSON.stringify({
-                            type: 'content_block_stop',
-                            index: 0
-                        })}\n\n`;
-
-                        // Emit message_delta
-                        yield `event: message_delta\ndata: ${JSON.stringify({
-                            type: 'message_delta',
-                            delta: {
-                                stop_reason: stopReason,
-                                stop_sequence: null
-                            },
-                            usage: {
-                                output_tokens: parsed.usageMetadata?.candidatesTokenCount || 0
-                            }
-                        })}\n\n`;
-
-                        // Emit message_stop
-                        yield `event: message_stop\ndata: ${JSON.stringify({
-                            type: 'message_stop'
-                        })}\n\n`;
-                    }
-                }
-            } catch (parseError) {
-                logger.warn('Failed to parse Google SSE chunk:', parseError);
-            }
-        }
-    }
-
     async *convertStreamResponse(response: Response, model: string): AsyncGenerator<string> {
         if (!response.body) {
             throw new ProviderError('No response body from Google', 'google');
@@ -296,8 +235,7 @@ export class GoogleTranspiler {
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
-        let buffer = '';
-
+        
         // Generate message ID
         const messageId = `msg_${Math.random().toString(36).substring(2, 15)}`;
 
@@ -325,27 +263,82 @@ export class GoogleTranspiler {
                 text: ''
             }
         })}\n\n`;
+
+        const events: string[] = [];
+        const parser = createParser({
+            onEvent: (event: EventSourceMessage) => {
+                try {
+                    const parsed = JSON.parse(event.data);
+                    const candidates = parsed.candidates;
+
+                    if (candidates && candidates.length > 0) {
+                        const content = candidates[0].content;
+                        const parts = content?.parts;
+
+                        if (parts && parts.length > 0 && parts[0].text) {
+                            // Emit content_block_delta
+                            events.push(`event: content_block_delta\ndata: ${JSON.stringify({
+                                type: 'content_block_delta',
+                                index: 0,
+                                delta: {
+                                    type: 'text_delta',
+                                    text: parts[0].text
+                                }
+                            })}\n\n`);
+                        }
+
+                        // Check for finish reason
+                        if (candidates[0].finishReason) {
+                            const stopReason = this.mapFinishReason(candidates[0].finishReason);
+
+                            // Emit content_block_stop
+                            events.push(`event: content_block_stop\ndata: ${JSON.stringify({
+                                type: 'content_block_stop',
+                                index: 0
+                            })}\n\n`);
+
+                            // Emit message_delta
+                            events.push(`event: message_delta\ndata: ${JSON.stringify({
+                                type: 'message_delta',
+                                delta: {
+                                    stop_reason: stopReason,
+                                    stop_sequence: null
+                                },
+                                usage: {
+                                    output_tokens: parsed.usageMetadata?.candidatesTokenCount || 0
+                                }
+                            })}\n\n`);
+
+                            // Emit message_stop
+                            events.push(`event: message_stop\ndata: ${JSON.stringify({
+                                type: 'message_stop'
+                            })}\n\n`);
+                        }
+                    }
+                } catch (parseError) {
+                    logger.warn('Failed to parse Google SSE chunk:', parseError);
+                }
+            }
+        });
+
         try {
             while (true) {
                 const { done, value } = await reader.read();
-
+                
                 if (value) {
-                    buffer += decoder.decode(value, { stream: !done });
+                    parser.feed(decoder.decode(value, { stream: !done }));
                 }
 
                 if (done) {
-                    if (buffer.trim()) {
-                        yield* this.processSSELine(buffer);
-                    }
-                    break;
+                    parser.feed('\n\n');
+                    parser.reset();
                 }
 
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
-
-                for (const line of lines) {
-                    yield* this.processSSELine(line);
+                while (events.length > 0) {
+                    yield events.shift()!;
                 }
+
+                if (done) break;
             }
         } finally {
             reader.releaseLock();
