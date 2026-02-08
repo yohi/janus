@@ -28,14 +28,21 @@ export class OpenAIAuth {
     private async startLocalServer(expectedState: string): Promise<{ server: Server; code: Promise<string> }> {
         return new Promise((resolve, reject) => {
             let codeResolver!: (code: string) => void;
+            let timeout: NodeJS.Timeout;
+            
             const codePromise = new Promise<string>((res) => {
-                codeResolver = res;
+                const originalRes = res;
+                codeResolver = (code) => {
+                    if (timeout) clearTimeout(timeout);
+                    originalRes(code);
+                };
             });
 
             const server = createServer((req, res) => {
                 const url = parseUrl(req.url || '', true);
 
-                if (url.pathname === '/auth/callback') {
+                const redirectUrl = parseUrl(config.openai.redirectUri);
+                if (url.pathname === redirectUrl.pathname) {
                     const code = url.query.code as string;
                     const state = url.query.state as string;
                     const error = url.query.error as string;
@@ -69,13 +76,17 @@ export class OpenAIAuth {
                 reject(err);
             });
 
-            server.listen(1455, 'localhost', () => {
-                logger.debug('Local OAuth server started on http://localhost:1455');
+            const redirectUrl = parseUrl(config.openai.redirectUri);
+            const port = parseInt(redirectUrl.port || '1455', 10);
+
+            server.listen(port, 'localhost', () => {
+                logger.debug(`Local OAuth server started on http://localhost:${port}`);
                 resolve({ server, code: codePromise });
 
-                setTimeout(() => {
+                timeout = setTimeout(() => {
                     codeResolver('');
                 }, 120000);
+                timeout.unref();
             });
         });
     }
@@ -89,7 +100,7 @@ export class OpenAIAuth {
         const { server, code: codePromise } = await this.startLocalServer(state);
 
         const clientId = config.openai.clientId;
-        const redirectUri = 'http://localhost:1455/auth/callback';
+        const redirectUri = config.openai.redirectUri;
 
         const params = new URLSearchParams({
             client_id: clientId,

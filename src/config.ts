@@ -30,7 +30,8 @@ export const config = {
     tokenUrl: 'https://auth0.openai.com/oauth/token',
     apiUrl: 'https://api.openai.com/v1',
     tokenPath: join(homedir(), '.csg', 'openai-token.json'),
-    scopes: ['openid', 'profile', 'email', 'offline_access', 'model.request']
+    scopes: ['openid', 'profile', 'email', 'offline_access', 'model.request'],
+    redirectUri: 'http://localhost:1455/auth/callback'
   },
   
   // Google (Antigravity) configuration
