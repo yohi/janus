@@ -5,7 +5,8 @@ import { join } from 'path';
 // 環境変数の必須チェック
 const requiredEnvVars = {
   CSG_GOOGLE_CLIENT_ID: process.env.CSG_GOOGLE_CLIENT_ID,
-  CSG_GOOGLE_CLIENT_SECRET: process.env.CSG_GOOGLE_CLIENT_SECRET
+  CSG_GOOGLE_CLIENT_SECRET: process.env.CSG_GOOGLE_CLIENT_SECRET,
+  CSG_OPENAI_CLIENT_ID: process.env.CSG_OPENAI_CLIENT_ID
 };
 
 for (const [key, value] of Object.entries(requiredEnvVars)) {
@@ -24,7 +25,7 @@ export const config = {
   
   // OpenAI (Codex) configuration
   openai: {
-    clientId: process.env.CSG_OPENAI_CLIENT_ID || '',
+    clientId: requiredEnvVars.CSG_OPENAI_CLIENT_ID!,
     authUrl: 'https://auth0.openai.com/authorize',
     tokenUrl: 'https://auth0.openai.com/oauth/token',
     apiUrl: 'https://api.openai.com/v1',

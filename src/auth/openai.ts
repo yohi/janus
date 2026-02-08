@@ -26,7 +26,7 @@ export class OpenAIAuth {
     }
 
     private async startLocalServer(expectedState: string): Promise<{ server: Server; code: Promise<string> }> {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             let codeResolver!: (code: string) => void;
             const codePromise = new Promise<string>((res) => {
                 codeResolver = res;
@@ -52,6 +52,10 @@ export class OpenAIAuth {
                         res.writeHead(200, { 'Content-Type': 'text/html' });
                         res.end('<h1>Authentication Successful!</h1><p>You can close this window now.</p>');
                         codeResolver(code);
+                    } else {
+                        res.writeHead(400, { 'Content-Type': 'text/html' });
+                        res.end('<h1>Authentication Failed</h1><p>No authorization code received.</p>');
+                        codeResolver('');
                     }
                 } else {
                     res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -59,9 +63,19 @@ export class OpenAIAuth {
                 }
             });
 
+            server.on('error', (err) => {
+                logger.error('Local OAuth server error:', err);
+                codeResolver('');
+                reject(err);
+            });
+
             server.listen(1455, 'localhost', () => {
                 logger.debug('Local OAuth server started on http://localhost:1455');
                 resolve({ server, code: codePromise });
+
+                setTimeout(() => {
+                    codeResolver('');
+                }, 120000);
             });
         });
     }
