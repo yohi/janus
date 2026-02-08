@@ -18,7 +18,10 @@ export class TokenStore {
             throw new Error('Fatal: Secure encryption key not configured.');
         }
         // Derive a 32-byte key from password
-        const salt = process.env.CSG_SALT || 'default-salt';
+        const salt = process.env.CSG_SALT;
+        if (!salt || salt === 'default-salt') {
+            throw new Error('Fatal: Secure salt not configured. Set CSG_SALT environment variable.');
+        }
         this.encryptionKey = scryptSync(password, salt, 32);
     }
 

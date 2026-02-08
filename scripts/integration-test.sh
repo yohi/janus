@@ -5,6 +5,7 @@ set -e
 
 # 1. 環境設定
 export CSG_ENCRYPTION_KEY="test-encryption-key-must-be-long-enough-123456"
+export CSG_SALT="test-salt-value-for-integration-tests"
 export CSG_PORT=4001
 export CSG_LOG_LEVEL=info
 export NODE_ENV=test
@@ -95,7 +96,7 @@ BODY=$(echo "$RESPONSE" | sed '$d')
 if [ "$HTTP_CODE" == "200" ] || [ "$HTTP_CODE" == "401" ]; then
   echo -e "${GREEN}PASS${NC} (HTTP $HTTP_CODE)"
 elif [ "$HTTP_CODE" == "500" ]; then
-  if [[ "$BODY" == *"No token file found"* ]] || [[ "$BODY" == *"Secure encryption key"* ]] || [[ "$BODY" == *"Internal server error"* ]]; then
+  if [[ "$BODY" == *"No token file found"* ]] || [[ "$BODY" == *"Secure encryption key"* ]]; then
      echo -e "${GREEN}PASS${NC} (HTTP 500 - Expected error: $(echo $BODY | cut -c 1-50)...)"
   else
      echo -e "${RED}FAIL${NC} (HTTP 500 - Unexpected error body: $BODY)"
