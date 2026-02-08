@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'url';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { config } from './config.js';
 import { logger } from './utils/logger.js';
@@ -52,8 +53,6 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
         });
     }
 });
-
-import { fileURLToPath } from 'url';
 
 // Start server
 export const startServer = () => {
