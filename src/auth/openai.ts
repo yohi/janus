@@ -1,18 +1,11 @@
-import axios from 'axios';
 import open from 'open';
+import { createServer, type Server } from 'http';
+import { parse as parseUrl } from 'url';
+import crypto from 'crypto';
 import { config } from '../config.js';
 import { tokenStore } from './token-store.js';
 import { logger } from '../utils/logger.js';
 import { AuthenticationError } from '../utils/errors.js';
-
-interface DeviceCodeResponse {
-    device_code: string;
-    user_code: string;
-    verification_uri: string;
-    verification_uri_complete: string;
-    expires_in: number;
-    interval: number;
-}
 
 interface TokenResponse {
     access_token: string;
@@ -23,85 +16,114 @@ interface TokenResponse {
 }
 
 export class OpenAIAuth {
-    private async requestDeviceCode(): Promise<DeviceCodeResponse> {
-        try {
-            const response = await axios.post<DeviceCodeResponse>(
-                config.openai.authUrl,
-                {
-                    client_id: config.openai.clientId,
-                    scope: config.openai.scopes.join(' ')
-                },
-                {
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-                }
-            );
-
-            return response.data;
-        } catch (error) {
-            logger.error('Failed to request device code:', error);
-            throw new AuthenticationError('Failed to initiate OpenAI authentication');
-        }
+    private generatePKCE(): { codeVerifier: string; codeChallenge: string } {
+        const codeVerifier = crypto.randomBytes(32).toString('base64url');
+        const codeChallenge = crypto
+            .createHash('sha256')
+            .update(codeVerifier)
+            .digest('base64url');
+        return { codeVerifier, codeChallenge };
     }
 
-    private async pollForToken(deviceCode: string, interval: number): Promise<TokenResponse> {
-        const maxAttempts = 60; // 5 minutes max
-        let attempts = 0;
+    private async startLocalServer(): Promise<{ server: Server; code: Promise<string> }> {
+        return new Promise((resolve) => {
+            let codeResolver: (code: string) => void;
+            const codePromise = new Promise<string>((res) => {
+                codeResolver = res;
+            });
 
-        while (attempts < maxAttempts) {
-            await new Promise(resolve => setTimeout(resolve, interval * 1000));
+            const server = createServer((req, res) => {
+                const url = parseUrl(req.url || '', true);
 
-            try {
-                const response = await axios.post<TokenResponse>(
-                    config.openai.tokenUrl,
-                    {
-                        client_id: config.openai.clientId,
-                        device_code: deviceCode,
-                        grant_type: 'urn:ietf:params:oauth:grant-type:device_code'
-                    },
-                    {
-                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                if (url.pathname === '/auth/callback') {
+                    const code = url.query.code as string;
+                    const error = url.query.error as string;
+
+                    if (error) {
+                        res.writeHead(400, { 'Content-Type': 'text/html' });
+                        res.end(`<h1>Authentication Failed</h1><p>Error: ${error}</p>`);
+                        codeResolver('');
+                    } else if (code) {
+                        res.writeHead(200, { 'Content-Type': 'text/html' });
+                        res.end('<h1>Authentication Successful!</h1><p>You can close this window now.</p>');
+                        codeResolver(code);
                     }
-                );
-
-                return response.data;
-            } catch (error: any) {
-                const errorCode = error.response?.data?.error;
-
-                if (errorCode === 'authorization_pending') {
-                    attempts++;
-                    continue;
-                } else if (errorCode === 'slow_down') {
-                    interval += 5;
-                    attempts++;
-                    continue;
-                } else if (errorCode === 'expired_token') {
-                    throw new AuthenticationError('Device code expired. Please try again.');
-                } else if (errorCode === 'access_denied') {
-                    throw new AuthenticationError('Access denied by user.');
-                } else {
-                    throw new AuthenticationError(`Authentication failed: ${errorCode}`);
                 }
-            }
-        }
+            });
 
-        throw new AuthenticationError('Authentication timeout. Please try again.');
+            server.listen(1455, 'localhost', () => {
+                logger.debug('Local OAuth server started on http://localhost:1455');
+                resolve({ server, code: codePromise });
+            });
+        });
     }
+
 
     async login(): Promise<void> {
         logger.info('Starting OpenAI (Codex) authentication...');
 
-        const deviceCode = await this.requestDeviceCode();
+        const { codeVerifier, codeChallenge } = this.generatePKCE();
+        const { server, code: codePromise } = await this.startLocalServer();
+
+        const clientId = config.openai.clientId;
+        const redirectUri = 'http://localhost:1455/auth/callback';
+
+        const params = new URLSearchParams({
+            client_id: clientId,
+            response_type: 'code',
+            scope: config.openai.scopes.join(' '),
+            code_challenge: codeChallenge,
+            code_challenge_method: 'S256',
+            redirect_uri: redirectUri,
+            state: crypto.randomBytes(16).toString('hex'),
+            id_token_add_organizations: 'true',
+            codex_cli_simplified_flow: 'true',
+            originator: 'codex_cli_rs'
+        });
+
+        const authUrl = `${config.openai.authUrl}?${params.toString()}`;
 
         logger.info(`\n🔐 OpenAI Authentication Required`);
-        logger.info(`\n📋 User Code: ${deviceCode.user_code}`);
-        logger.info(`🌐 Opening browser: ${deviceCode.verification_uri_complete}\n`);
+        logger.info(`🌐 Opening browser: ${authUrl}\n`);
 
-        // Open browser
-        await open(deviceCode.verification_uri_complete);
+        await open(authUrl);
 
         logger.info('⏳ Waiting for authorization...');
 
-        const token = await this.pollForToken(deviceCode.device_code, deviceCode.interval);
+        const code = await codePromise;
+        server.close();
+
+        if (!code) {
+            throw new AuthenticationError('Authorization failed or was cancelled');
+        }
+
+        logger.info('Exchanging code for token...');
+
+        const tokenBody = new URLSearchParams({
+            client_id: config.openai.clientId,
+            grant_type: 'authorization_code',
+            code: code,
+            code_verifier: codeVerifier,
+            redirect_uri: redirectUri
+        });
+
+        const response = await fetch(config.openai.tokenUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json'
+            },
+            body: tokenBody
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            logger.error(`Token exchange error (${response.status}): ${text}`);
+            throw new AuthenticationError('Failed to exchange code for token');
+        }
+
+        const token = await response.json() as TokenResponse;
 
         // Save token
         await tokenStore.save(config.openai.tokenPath, {
@@ -130,23 +152,35 @@ export class OpenAIAuth {
         logger.info('Refreshing OpenAI token...');
 
         try {
-            const response = await axios.post<TokenResponse>(
-                config.openai.tokenUrl,
-                {
-                    client_id: config.openai.clientId,
-                    refresh_token: tokenData.refresh_token,
-                    grant_type: 'refresh_token'
+            const body = new URLSearchParams({
+                client_id: config.openai.clientId,
+                refresh_token: tokenData.refresh_token || '',
+                grant_type: 'refresh_token'
+            });
+
+            const response = await fetch(config.openai.tokenUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'application/json'
                 },
-                {
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-                }
-            );
+                body: body
+            });
+
+            if (!response.ok) {
+                const text = await response.text();
+                logger.error(`Token refresh error (${response.status}): ${text}`);
+                throw new Error(`Request failed with status ${response.status}`);
+            }
+
+            const data = await response.json() as TokenResponse;
 
             const newTokenData = {
-                access_token: response.data.access_token,
-                refresh_token: response.data.refresh_token ?? tokenData.refresh_token,
-                expires_at: Date.now() + (response.data.expires_in * 1000),
-                scope: response.data.scope
+                access_token: data.access_token,
+                refresh_token: data.refresh_token ?? tokenData.refresh_token,
+                expires_at: Date.now() + (data.expires_in * 1000),
+                scope: data.scope
             };
 
             await tokenStore.save(config.openai.tokenPath, newTokenData);
