@@ -139,6 +139,32 @@ export class OpenAITranspiler {
     }
 
     /**
+     * Convert OpenAI non-streaming response to Anthropic format
+     */
+    async convertResponse(response: Response): Promise<any> {
+        const data = await response.json();
+
+        return {
+            id: data.id,
+            type: 'message',
+            role: 'assistant',
+            content: [
+                {
+                    type: 'text',
+                    text: data.choices?.[0]?.message?.content || ''
+                }
+            ],
+            model: data.model,
+            stop_reason: data.choices?.[0]?.finish_reason,
+            stop_sequence: null,
+            usage: {
+                input_tokens: data.usage?.prompt_tokens || 0,
+                output_tokens: data.usage?.completion_tokens || 0
+            }
+        };
+    }
+
+    /**
      * Convert OpenAI SSE stream to Anthropic format
      */
     async *convertStreamResponse(response: Response): AsyncGenerator<string> {
@@ -149,6 +175,34 @@ export class OpenAITranspiler {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+
+        // Generate message ID
+        const messageId = `msg_${Math.random().toString(36).substring(2, 15)}`;
+
+        // Emit message_start
+        yield `event: message_start\ndata: ${JSON.stringify({
+            type: 'message_start',
+            message: {
+                id: messageId,
+                type: 'message',
+                role: 'assistant',
+                content: [],
+                model: 'gpt-4o', // Placeholder, will be updated if possible
+                stop_reason: null,
+                stop_sequence: null,
+                usage: { input_tokens: 0, output_tokens: 0 }
+            }
+        })}\n\n`;
+
+        // Emit content_block_start
+        yield `event: content_block_start\ndata: ${JSON.stringify({
+            type: 'content_block_start',
+            index: 0,
+            content_block: {
+                type: 'text',
+                text: ''
+            }
+        })}\n\n`;
 
         try {
             while (true) {
@@ -170,22 +224,41 @@ export class OpenAITranspiler {
                             const delta = parsed.choices?.[0]?.delta;
 
                             if (delta?.content) {
-                                // Convert to Anthropic format
-                                const anthropicChunk = {
+                                // Emit content_block_delta
+                                yield `event: content_block_delta\ndata: ${JSON.stringify({
                                     type: 'content_block_delta',
                                     index: 0,
                                     delta: {
                                         type: 'text_delta',
                                         text: delta.content
                                     }
-                                };
-
-                                yield `event: content_block_delta\ndata: ${JSON.stringify(anthropicChunk)}\n\n`;
+                                })}\n\n`;
                             }
 
-                            // Send message_stop event when done
+                            // Handle finish reason
                             if (parsed.choices?.[0]?.finish_reason) {
-                                yield `event: message_stop\ndata: {}\n\n`;
+                                // Emit content_block_stop
+                                yield `event: content_block_stop\ndata: ${JSON.stringify({
+                                    type: 'content_block_stop',
+                                    index: 0
+                                })}\n\n`;
+
+                                // Emit message_delta
+                                yield `event: message_delta\ndata: ${JSON.stringify({
+                                    type: 'message_delta',
+                                    delta: {
+                                        stop_reason: parsed.choices[0].finish_reason,
+                                        stop_sequence: null
+                                    },
+                                    usage: {
+                                        output_tokens: 0 // Usage not available in stream end usually
+                                    }
+                                })}\n\n`;
+
+                                // Emit message_stop
+                                yield `event: message_stop\ndata: ${JSON.stringify({
+                                    type: 'message_stop'
+                                })}\n\n`;
                             }
                         } catch (parseError) {
                             logger.warn('Failed to parse OpenAI SSE chunk:', parseError);

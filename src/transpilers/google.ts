@@ -151,6 +151,33 @@ export class GoogleTranspiler {
     }
 
     /**
+     * Convert Google Gemini non-streaming response to Anthropic format
+     */
+    async convertResponse(response: Response): Promise<any> {
+        const data = await response.json();
+        const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+        return {
+            id: `msg_${Math.random().toString(36).substring(2, 15)}`,
+            type: 'message',
+            role: 'assistant',
+            content: [
+                {
+                    type: 'text',
+                    text: content
+                }
+            ],
+            model: 'gemini-1.5-pro', // Placeholder
+            stop_reason: data.candidates?.[0]?.finishReason ? 'end_turn' : null,
+            stop_sequence: null,
+            usage: {
+                input_tokens: data.usageMetadata?.promptTokenCount || 0,
+                output_tokens: data.usageMetadata?.candidatesTokenCount || 0
+            }
+        };
+    }
+
+    /**
      * Convert Google SSE stream to Anthropic format
      */
     async *convertStreamResponse(response: Response): AsyncGenerator<string> {
@@ -161,6 +188,34 @@ export class GoogleTranspiler {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+
+        // Generate message ID
+        const messageId = `msg_${Math.random().toString(36).substring(2, 15)}`;
+
+        // Emit message_start
+        yield `event: message_start\ndata: ${JSON.stringify({
+            type: 'message_start',
+            message: {
+                id: messageId,
+                type: 'message',
+                role: 'assistant',
+                content: [],
+                model: 'gemini-1.5-pro',
+                stop_reason: null,
+                stop_sequence: null,
+                usage: { input_tokens: 0, output_tokens: 0 }
+            }
+        })}\n\n`;
+
+        // Emit content_block_start
+        yield `event: content_block_start\ndata: ${JSON.stringify({
+            type: 'content_block_start',
+            index: 0,
+            content_block: {
+                type: 'text',
+                text: ''
+            }
+        })}\n\n`;
 
         try {
             while (true) {
@@ -185,22 +240,41 @@ export class GoogleTranspiler {
                                 const parts = content?.parts;
 
                                 if (parts && parts.length > 0 && parts[0].text) {
-                                    // Convert to Anthropic format
-                                    const anthropicChunk = {
+                                    // Emit content_block_delta
+                                    yield `event: content_block_delta\ndata: ${JSON.stringify({
                                         type: 'content_block_delta',
                                         index: 0,
                                         delta: {
                                             type: 'text_delta',
                                             text: parts[0].text
                                         }
-                                    };
-
-                                    yield `event: content_block_delta\ndata: ${JSON.stringify(anthropicChunk)}\n\n`;
+                                    })}\n\n`;
                                 }
 
                                 // Check for finish reason
                                 if (candidates[0].finishReason) {
-                                    yield `event: message_stop\ndata: {}\n\n`;
+                                    // Emit content_block_stop
+                                    yield `event: content_block_stop\ndata: ${JSON.stringify({
+                                        type: 'content_block_stop',
+                                        index: 0
+                                    })}\n\n`;
+
+                                    // Emit message_delta
+                                    yield `event: message_delta\ndata: ${JSON.stringify({
+                                        type: 'message_delta',
+                                        delta: {
+                                            stop_reason: 'end_turn', // Map Google finish reason to Anthropic
+                                            stop_sequence: null
+                                        },
+                                        usage: {
+                                            output_tokens: parsed.usageMetadata?.candidatesTokenCount || 0
+                                        }
+                                    })}\n\n`;
+
+                                    // Emit message_stop
+                                    yield `event: message_stop\ndata: ${JSON.stringify({
+                                        type: 'message_stop'
+                                    })}\n\n`;
                                 }
                             }
                         } catch (parseError) {

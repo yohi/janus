@@ -47,7 +47,7 @@ export const handleMessages = async (req: Request, res: Response) => {
                 res.end();
             } else {
                 // Non-streaming response
-                const data = await response.json();
+                const data = await openaiTranspiler.convertResponse(response);
                 res.json(data);
             }
         } else if (isGoogle) {
@@ -65,7 +65,7 @@ export const handleMessages = async (req: Request, res: Response) => {
                 res.end();
             } else {
                 // Non-streaming response
-                const data = await response.json();
+                const data = await googleTranspiler.convertResponse(response);
                 res.json(data);
             }
         }
@@ -73,6 +73,25 @@ export const handleMessages = async (req: Request, res: Response) => {
         logger.info('Request completed successfully');
     } catch (error) {
         logger.error('Error in handleMessages:', error);
-        throw error;
+
+        if (res.headersSent) {
+            // Error during streaming
+            res.write(`event: error\ndata: ${JSON.stringify({
+                type: 'error',
+                error: {
+                    type: 'internal_server_error',
+                    message: 'Internal server error occurred during streaming'
+                }
+            })}\n\n`);
+            res.end();
+        } else {
+            res.status(500).json({
+                type: 'error',
+                error: {
+                    type: 'internal_server_error',
+                    message: 'Internal server error'
+                }
+            });
+        }
     }
 };
