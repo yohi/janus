@@ -25,9 +25,9 @@ export class OpenAIAuth {
         return { codeVerifier, codeChallenge };
     }
 
-    private async startLocalServer(): Promise<{ server: Server; code: Promise<string> }> {
+    private async startLocalServer(expectedState: string): Promise<{ server: Server; code: Promise<string> }> {
         return new Promise((resolve) => {
-            let codeResolver: (code: string) => void;
+            let codeResolver!: (code: string) => void;
             const codePromise = new Promise<string>((res) => {
                 codeResolver = res;
             });
@@ -37,17 +37,25 @@ export class OpenAIAuth {
 
                 if (url.pathname === '/auth/callback') {
                     const code = url.query.code as string;
+                    const state = url.query.state as string;
                     const error = url.query.error as string;
 
                     if (error) {
                         res.writeHead(400, { 'Content-Type': 'text/html' });
                         res.end(`<h1>Authentication Failed</h1><p>Error: ${error}</p>`);
                         codeResolver('');
+                    } else if (state !== expectedState) {
+                        res.writeHead(400, { 'Content-Type': 'text/html' });
+                        res.end(`<h1>Authentication Failed</h1><p>Invalid state parameter</p>`);
+                        codeResolver('');
                     } else if (code) {
                         res.writeHead(200, { 'Content-Type': 'text/html' });
                         res.end('<h1>Authentication Successful!</h1><p>You can close this window now.</p>');
                         codeResolver(code);
                     }
+                } else {
+                    res.writeHead(404, { 'Content-Type': 'text/plain' });
+                    res.end('Not Found');
                 }
             });
 
@@ -63,7 +71,8 @@ export class OpenAIAuth {
         logger.info('Starting OpenAI (Codex) authentication...');
 
         const { codeVerifier, codeChallenge } = this.generatePKCE();
-        const { server, code: codePromise } = await this.startLocalServer();
+        const state = crypto.randomBytes(16).toString('hex');
+        const { server, code: codePromise } = await this.startLocalServer(state);
 
         const clientId = config.openai.clientId;
         const redirectUri = 'http://localhost:1455/auth/callback';
@@ -75,7 +84,7 @@ export class OpenAIAuth {
             code_challenge: codeChallenge,
             code_challenge_method: 'S256',
             redirect_uri: redirectUri,
-            state: crypto.randomBytes(16).toString('hex'),
+            state: state,
             id_token_add_organizations: 'true',
             codex_cli_simplified_flow: 'true',
             originator: 'codex_cli_rs'
@@ -125,7 +134,6 @@ export class OpenAIAuth {
 
         const token = await response.json() as TokenResponse;
 
-        // Save token
         await tokenStore.save(config.openai.tokenPath, {
             access_token: token.access_token,
             refresh_token: token.refresh_token,
@@ -143,18 +151,23 @@ export class OpenAIAuth {
             throw new AuthenticationError('No OpenAI token found. Please run: claude-gateway auth codex');
         }
 
-        // Check if token is still valid
         if (tokenStore.isTokenValid(tokenData)) {
             return tokenData.access_token;
         }
 
-        // Refresh token
         logger.info('Refreshing OpenAI token...');
+
+        if (!tokenData.refresh_token || tokenData.refresh_token.trim() === '') {
+            await tokenStore.delete(config.openai.tokenPath);
+            throw new AuthenticationError(
+                'Refresh token is missing or invalid. Please re-authenticate: claude-gateway auth codex'
+            );
+        }
 
         try {
             const body = new URLSearchParams({
                 client_id: config.openai.clientId,
-                refresh_token: tokenData.refresh_token || '',
+                refresh_token: tokenData.refresh_token,
                 grant_type: 'refresh_token'
             });
 
