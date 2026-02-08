@@ -153,9 +153,34 @@ export class GoogleTranspiler {
     /**
      * Convert Google Gemini non-streaming response to Anthropic format
      */
-    async convertResponse(response: Response): Promise<any> {
+    private mapFinishReason(finishReason: string | undefined): string | null {
+        if (!finishReason) return null;
+        switch (finishReason) {
+            case 'STOP':
+            case 'FINISHED':
+                return 'end_turn';
+            case 'MAX_TOKENS':
+                return 'max_tokens';
+            case 'STOP_SEQUENCE':
+                return 'stop_sequence';
+            case 'SAFETY':
+            case 'RECITATION':
+                return 'refusal';
+            case 'INTERRUPTED':
+                return 'end_turn';
+            default:
+                return 'end_turn';
+        }
+    }
+
+    /**
+     * Convert Google Gemini non-streaming response to Anthropic format
+     */
+    async convertResponse(response: Response, model: string): Promise<any> {
         const data = await response.json();
         const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        const finishReason = data.candidates?.[0]?.finishReason;
+        const stopReason = this.mapFinishReason(finishReason);
 
         return {
             id: `msg_${Math.random().toString(36).substring(2, 15)}`,
@@ -167,9 +192,9 @@ export class GoogleTranspiler {
                     text: content
                 }
             ],
-            model: 'gemini-1.5-pro', // Placeholder
-            stop_reason: data.candidates?.[0]?.finishReason ? 'end_turn' : null,
-            stop_sequence: null,
+            model: model,
+            stop_reason: stopReason,
+            stop_sequence: stopReason === 'stop_sequence' ? null : null, // stop_sequence value not easily available in standard finishReason
             usage: {
                 input_tokens: data.usageMetadata?.promptTokenCount || 0,
                 output_tokens: data.usageMetadata?.candidatesTokenCount || 0
@@ -180,7 +205,7 @@ export class GoogleTranspiler {
     /**
      * Convert Google SSE stream to Anthropic format
      */
-    async *convertStreamResponse(response: Response): AsyncGenerator<string> {
+    async *convertStreamResponse(response: Response, model: string): AsyncGenerator<string> {
         if (!response.body) {
             throw new ProviderError('No response body from Google', 'google');
         }
@@ -200,7 +225,7 @@ export class GoogleTranspiler {
                 type: 'message',
                 role: 'assistant',
                 content: [],
-                model: 'gemini-1.5-pro',
+                model: model,
                 stop_reason: null,
                 stop_sequence: null,
                 usage: { input_tokens: 0, output_tokens: 0 }
@@ -253,6 +278,8 @@ export class GoogleTranspiler {
 
                                 // Check for finish reason
                                 if (candidates[0].finishReason) {
+                                    const stopReason = this.mapFinishReason(candidates[0].finishReason);
+
                                     // Emit content_block_stop
                                     yield `event: content_block_stop\ndata: ${JSON.stringify({
                                         type: 'content_block_stop',
@@ -263,7 +290,7 @@ export class GoogleTranspiler {
                                     yield `event: message_delta\ndata: ${JSON.stringify({
                                         type: 'message_delta',
                                         delta: {
-                                            stop_reason: 'end_turn', // Map Google finish reason to Anthropic
+                                            stop_reason: stopReason,
                                             stop_sequence: null
                                         },
                                         usage: {

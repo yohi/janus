@@ -141,8 +141,29 @@ export class OpenAITranspiler {
     /**
      * Convert OpenAI non-streaming response to Anthropic format
      */
-    async convertResponse(response: Response): Promise<any> {
+    private mapFinishReason(finishReason: string | undefined): string | null {
+        if (!finishReason) return null;
+        switch (finishReason) {
+            case 'stop':
+                return 'end_turn';
+            case 'length':
+                return 'max_tokens';
+            case 'tool_calls':
+            case 'function_call':
+                return 'tool_use';
+            case 'content_filter':
+                return 'refusal';
+            default:
+                return finishReason;
+        }
+    }
+
+    /**
+     * Convert OpenAI non-streaming response to Anthropic format
+     */
+    async convertResponse(response: Response, model: string): Promise<any> {
         const data = await response.json();
+        const finishReason = data.choices?.[0]?.finish_reason;
 
         return {
             id: data.id,
@@ -154,8 +175,8 @@ export class OpenAITranspiler {
                     text: data.choices?.[0]?.message?.content || ''
                 }
             ],
-            model: data.model,
-            stop_reason: data.choices?.[0]?.finish_reason,
+            model: data.model || model,
+            stop_reason: this.mapFinishReason(finishReason),
             stop_sequence: null,
             usage: {
                 input_tokens: data.usage?.prompt_tokens || 0,
@@ -167,7 +188,7 @@ export class OpenAITranspiler {
     /**
      * Convert OpenAI SSE stream to Anthropic format
      */
-    async *convertStreamResponse(response: Response): AsyncGenerator<string> {
+    async *convertStreamResponse(response: Response, model: string): AsyncGenerator<string> {
         if (!response.body) {
             throw new ProviderError('No response body from OpenAI', 'openai');
         }
@@ -187,7 +208,7 @@ export class OpenAITranspiler {
                 type: 'message',
                 role: 'assistant',
                 content: [],
-                model: 'gpt-4o', // Placeholder, will be updated if possible
+                model: model,
                 stop_reason: null,
                 stop_sequence: null,
                 usage: { input_tokens: 0, output_tokens: 0 }
@@ -247,7 +268,7 @@ export class OpenAITranspiler {
                                 yield `event: message_delta\ndata: ${JSON.stringify({
                                     type: 'message_delta',
                                     delta: {
-                                        stop_reason: parsed.choices[0].finish_reason,
+                                        stop_reason: this.mapFinishReason(parsed.choices[0].finish_reason),
                                         stop_sequence: null
                                     },
                                     usage: {

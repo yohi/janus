@@ -9,6 +9,17 @@ export const handleMessages = async (req: Request, res: Response) => {
     try {
         const { model, messages, stream = true } = req.body;
 
+        // Validation for model
+        if (typeof model !== 'string' || model.trim().length === 0) {
+            return res.status(400).json({
+                type: 'error',
+                error: {
+                    type: 'invalid_request_error',
+                    message: typeof model !== 'string' ? "Invalid type for 'model': expected string" : "Invalid value for 'model': must not be empty"
+                }
+            });
+        }
+
         logger.info(`Incoming request for model: ${model}`);
 
         // Determine which provider to use based on model name
@@ -41,13 +52,13 @@ export const handleMessages = async (req: Request, res: Response) => {
 
             if (stream) {
                 // Stream response
-                for await (const chunk of openaiTranspiler.convertStreamResponse(response)) {
+                for await (const chunk of openaiTranspiler.convertStreamResponse(response, model)) {
                     res.write(chunk);
                 }
                 res.end();
             } else {
                 // Non-streaming response
-                const data = await openaiTranspiler.convertResponse(response);
+                const data = await openaiTranspiler.convertResponse(response, model);
                 res.json(data);
             }
         } else if (isGoogle) {
@@ -59,13 +70,13 @@ export const handleMessages = async (req: Request, res: Response) => {
 
             if (stream) {
                 // Stream response
-                for await (const chunk of googleTranspiler.convertStreamResponse(response)) {
+                for await (const chunk of googleTranspiler.convertStreamResponse(response, model)) {
                     res.write(chunk);
                 }
                 res.end();
             } else {
                 // Non-streaming response
-                const data = await googleTranspiler.convertResponse(response);
+                const data = await googleTranspiler.convertResponse(response, model);
                 res.json(data);
             }
         }
@@ -74,8 +85,15 @@ export const handleMessages = async (req: Request, res: Response) => {
     } catch (error) {
         logger.error('Error in handleMessages:', error);
 
-        if (res.headersSent) {
-            // Error during streaming
+        const streamVal = req.body?.stream === undefined ? true : req.body?.stream;
+        if (streamVal || res.headersSent) {
+            // Error during streaming or streaming intended
+            if (!res.headersSent) {
+                // If headers not yet sent but we intended to stream, send headers now to support events
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.setHeader('Cache-Control', 'no-cache');
+                res.setHeader('Connection', 'keep-alive');
+            }
             res.write(`event: error\ndata: ${JSON.stringify({
                 type: 'error',
                 error: {
