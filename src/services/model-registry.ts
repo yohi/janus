@@ -31,7 +31,34 @@ interface Cache {
 export class ModelRegistryService {
     private cache: Map<string, Cache> = new Map();
     private readonly CACHE_TTL = 3600 * 1000; // 1 hour
+    private readonly CACHE_MAX_ITEMS = 100;
     private readonly FETCH_TIMEOUT = 30 * 1000; // 30 seconds
+
+    /**
+     * Prune cache to remove expired items and limit size
+     */
+    private pruneCache(): void {
+        const now = Date.now();
+        const entries = Array.from(this.cache.entries());
+
+        // Remove expired items
+        for (const [key, value] of entries) {
+            if (now - value.timestamp > this.CACHE_TTL) {
+                this.cache.delete(key);
+            }
+        }
+
+        // If still over limit, remove oldest
+        if (this.cache.size > this.CACHE_MAX_ITEMS) {
+            const sortedEntries = Array.from(this.cache.entries())
+                .sort((a, b) => a[1].timestamp - b[1].timestamp);
+
+            const toRemove = sortedEntries.slice(0, this.cache.size - this.CACHE_MAX_ITEMS);
+            for (const [key] of toRemove) {
+                this.cache.delete(key);
+            }
+        }
+    }
 
     /**
      * Get aggregated list of models
@@ -89,6 +116,7 @@ export class ModelRegistryService {
         const uniqueModels = Array.from(new Map(models.map(m => [m.id, m])).values());
 
         // Update cache
+        this.pruneCache();
         this.cache.set(cacheKey, {
             data: uniqueModels,
             timestamp: Date.now()

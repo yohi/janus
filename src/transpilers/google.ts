@@ -108,7 +108,15 @@ export class GoogleTranspiler {
             'claude-3-haiku-20240307': 'gemini-2.0-flash-exp'
         };
 
-        return modelMap[anthropicModel] || 'gemini-1.5-pro';
+        if (modelMap[anthropicModel]) {
+            return modelMap[anthropicModel];
+        }
+
+        if (anthropicModel.startsWith('gemini-')) {
+            return anthropicModel;
+        }
+
+        return 'gemini-1.5-pro';
     }
 
     /**

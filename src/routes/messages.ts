@@ -23,7 +23,7 @@ export const handleMessages = async (req: Request, res: Response) => {
         logger.info(`Incoming request for model: ${model}`);
 
         // Determine which provider to use based on model name
-        const isOpenAI = model.startsWith('gpt') || model.includes('codex');
+        const isOpenAI = /^(gpt|o[1-9]|chatgpt)-/.test(model) || model.includes('codex');
         const isGoogle = model.startsWith('gemini') || model.includes('antigravity');
 
         // If not OpenAI or Google, we assume it's a native Anthropic request and pass it through
@@ -43,6 +43,9 @@ export const handleMessages = async (req: Request, res: Response) => {
                 });
             }
 
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
+
             try {
                 const response = await fetch('https://api.anthropic.com/v1/messages', {
                     method: 'POST',
@@ -51,8 +54,11 @@ export const handleMessages = async (req: Request, res: Response) => {
                         'x-api-key': apiKey as string,
                         'anthropic-version': (anthropicVersion as string) || '2023-06-01'
                     },
-                    body: JSON.stringify(req.body)
+                    body: JSON.stringify(req.body),
+                    signal: controller.signal
                 });
+
+                clearTimeout(timeoutId);
 
                 if (!response.ok) {
                     const errorText = await response.text();
@@ -118,6 +124,17 @@ export const handleMessages = async (req: Request, res: Response) => {
                 logger.info('Request completed successfully');
                 return;
             } catch (error) {
+                clearTimeout(timeoutId);
+                if (error instanceof Error && error.name === 'AbortError') {
+                    logger.error('Anthropic API request timed out');
+                    return res.status(504).json({
+                        type: 'error',
+                        error: {
+                            type: 'timeout_error',
+                            message: 'Upstream request timed out'
+                        }
+                    });
+                }
                 logger.error('Error forwarding to Anthropic:', error);
                 throw error; // Let the main error handler catch it
             }
