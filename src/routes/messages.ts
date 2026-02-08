@@ -70,6 +70,12 @@ export const handleMessages = async (req: Request, res: Response) => {
                         throw new Error('No response body from Anthropic');
                     }
 
+                    // Set headers before starting stream
+                    res.setHeader('Content-Type', 'text/event-stream');
+                    res.setHeader('Cache-Control', 'no-cache');
+                    res.setHeader('Connection', 'keep-alive');
+                    res.flushHeaders();
+
                     const reader = response.body.getReader();
                     const decoder = new TextDecoder();
 

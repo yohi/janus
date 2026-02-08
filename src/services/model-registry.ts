@@ -30,17 +30,22 @@ interface Cache {
 }
 
 export class ModelRegistryService {
-    private cache: Cache | null = null;
+    private cache: Map<string, Cache> = new Map();
     private readonly CACHE_TTL = 3600 * 1000; // 1 hour
+    private readonly FETCH_TIMEOUT = 30 * 1000; // 30 seconds
 
     /**
      * Get aggregated list of models
      */
     async getModels(anthropicApiKey?: string, anthropicVersion?: string): Promise<Model[]> {
+        // Generate cache key
+        const cacheKey = anthropicApiKey ? `${anthropicApiKey}:${anthropicVersion || 'default'}` : 'public';
+
         // Check cache
-        if (this.cache && (Date.now() - this.cache.timestamp < this.CACHE_TTL)) {
+        const cached = this.cache.get(cacheKey);
+        if (cached && (Date.now() - cached.timestamp < this.CACHE_TTL)) {
             logger.info('Returning cached model list');
-            return this.cache.data;
+            return cached.data;
         }
 
         logger.info('Fetching fresh model list...');
@@ -85,51 +90,78 @@ export class ModelRegistryService {
         const uniqueModels = Array.from(new Map(models.map(m => [m.id, m])).values());
 
         // Update cache
-        this.cache = {
+        this.cache.set(cacheKey, {
             data: uniqueModels,
             timestamp: Date.now()
-        };
+        });
 
         return uniqueModels;
     }
 
     private async fetchAnthropicModels(apiKey: string, version: string = '2023-06-01'): Promise<Model[]> {
-        const response = await fetch('https://api.anthropic.com/v1/models', {
-            headers: {
-                'x-api-key': apiKey,
-                'anthropic-version': version
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), this.FETCH_TIMEOUT);
+
+        try {
+            const response = await fetch('https://api.anthropic.com/v1/models', {
+                signal: controller.signal,
+                headers: {
+                    'x-api-key': apiKey,
+                    'anthropic-version': version
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error(`Anthropic API error: ${response.statusText}`);
             }
-        });
 
-        if (!response.ok) {
-            throw new Error(`Anthropic API error: ${response.statusText}`);
+            const data = await response.json() as { data: AnthropicModel[] };
+
+            return data.data.map(m => ({
+                id: m.id,
+                object: 'model',
+                created: new Date(m.created_at).getTime(),
+                owned_by: 'anthropic'
+            }));
+        } catch (error) {
+            if (error instanceof Error && error.name === 'AbortError') {
+                throw new Error('Anthropic API request timed out');
+            }
+            throw error;
+        } finally {
+            clearTimeout(timeoutId);
         }
-
-        const data = await response.json() as { data: AnthropicModel[] };
-
-        return data.data.map(m => ({
-            id: m.id,
-            object: 'model',
-            created: new Date(m.created_at).getTime(),
-            owned_by: 'anthropic'
-        }));
     }
 
     private async fetchOpenAIModels(token: string): Promise<Model[]> {
-        const response = await fetch(`${config.openai.apiUrl}/models`, {
-            headers: {
-                'Authorization': `Bearer ${token}`
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), this.FETCH_TIMEOUT);
+
+        try {
+            const response = await fetch(`${config.openai.apiUrl}/models`, {
+                signal: controller.signal,
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                // If local proxy or specific endpoint fails, warn but don't crash
+                logger.warn(`OpenAI models fetch failed: ${response.status}`);
+                return [];
             }
-        });
 
-        if (!response.ok) {
-            // If local proxy or specific endpoint fails, warn but don't crash
-            logger.warn(`OpenAI models fetch failed: ${response.status}`);
-            return [];
+            const data = await response.json() as { data: OpenAIModel[] };
+            return data.data;
+        } catch (error) {
+            if (error instanceof Error && error.name === 'AbortError') {
+                logger.warn('OpenAI models fetch timed out');
+                return [];
+            }
+            throw error;
+        } finally {
+            clearTimeout(timeoutId);
         }
-
-        const data = await response.json() as { data: OpenAIModel[] };
-        return data.data;
     }
 }
 
