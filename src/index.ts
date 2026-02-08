@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'url';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { config } from './config.js';
 import { logger } from './utils/logger.js';
@@ -54,11 +55,18 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 });
 
 // Start server
-app.listen(config.port, config.host, () => {
-    logger.info(`🚀 CSG Gateway running on http://${config.host}:${config.port}`);
-    logger.info(`📝 Anthropic-compatible endpoints:`);
-    logger.info(`   POST /v1/messages`);
-    logger.info(`   GET  /v1/models`);
-});
+export const startServer = () => {
+    return app.listen(config.port, config.host, () => {
+        logger.info(`🚀 CSG Gateway running on http://${config.host}:${config.port}`);
+        logger.info(`📝 Anthropic-compatible endpoints:`);
+        logger.info(`   POST /v1/messages`);
+        logger.info(`   GET  /v1/models`);
+    });
+};
+
+// Run server only if executed directly
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+    startServer();
+}
 
 export default app;
