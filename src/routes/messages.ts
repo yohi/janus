@@ -26,14 +26,77 @@ export const handleMessages = async (req: Request, res: Response) => {
         const isOpenAI = model.startsWith('gpt') || model.includes('codex');
         const isGoogle = model.startsWith('gemini') || model.includes('antigravity');
 
+        // If not OpenAI or Google, we assume it's a native Anthropic request and pass it through
         if (!isOpenAI && !isGoogle) {
-            return res.status(400).json({
-                type: 'error',
-                error: {
-                    type: 'invalid_request_error',
-                    message: `Unsupported model: ${model}`
+            logger.info('Routing to Anthropic (Pass-through)...');
+
+            const apiKey = req.headers['x-api-key'];
+            const anthropicVersion = req.headers['anthropic-version'];
+
+            if (!apiKey) {
+                return res.status(401).json({
+                    type: 'error',
+                    error: {
+                        type: 'authentication_error',
+                        message: 'Missing x-api-key header'
+                    }
+                });
+            }
+
+            try {
+                const response = await fetch('https://api.anthropic.com/v1/messages', {
+                    method: 'POST',
+                    headers: {
+                        'content-type': 'application/json',
+                        'x-api-key': apiKey as string,
+                        'anthropic-version': (anthropicVersion as string) || '2023-06-01'
+                    },
+                    body: JSON.stringify(req.body)
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    logger.error(`Anthropic API error: ${response.status} - ${errorText}`);
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        return res.status(response.status).json(errorJson);
+                    } catch {
+                        return res.status(response.status).send(errorText);
+                    }
                 }
-            });
+
+                if (stream) {
+                    if (!response.body) {
+                        throw new Error('No response body from Anthropic');
+                    }
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+
+                    try {
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) {
+                                break;
+                            }
+                            const chunk = decoder.decode(value, { stream: true });
+                            res.write(chunk);
+                        }
+                    } finally {
+                        res.end();
+                        reader.releaseLock();
+                    }
+                } else {
+                    const data = await response.json();
+                    res.json(data);
+                }
+
+                logger.info('Request completed successfully');
+                return;
+            } catch (error) {
+                logger.error('Error forwarding to Anthropic:', error);
+                throw error; // Let the main error handler catch it
+            }
         }
 
         // Set SSE headers for streaming
