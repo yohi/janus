@@ -12,7 +12,7 @@ export const handleMessages = async (req: Request, res: Response) => {
         logger.info(`Incoming request for model: ${model}`);
 
         // Determine which provider to use based on model name
-        const isOpenAI = model.startsWith('gpt') || model.includes('codex') || model.startsWith('claude');
+        const isOpenAI = model.startsWith('gpt') || model.includes('codex');
         const isGoogle = model.startsWith('gemini') || model.includes('antigravity');
 
         if (!isOpenAI && !isGoogle) {

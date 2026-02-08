@@ -1,4 +1,4 @@
-import axios from 'axios';
+
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { ProviderError, TranspilerError } from '../utils/errors.js';
