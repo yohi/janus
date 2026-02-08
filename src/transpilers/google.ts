@@ -116,7 +116,12 @@ export class GoogleTranspiler {
      * Call Google Gemini API
      */
     async callAPI(googleReq: GoogleRequest, anthropicModel: string, token: string, stream: boolean = true): Promise<Response> {
+        let timeoutId: NodeJS.Timeout | undefined;
+        const controller = new AbortController();
+
         try {
+            timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
+
             const model = this.mapModel(anthropicModel);
             const endpoint = stream ? 'streamGenerateContent' : 'generateContent';
             const url = `${config.google.apiUrl}/v1/models/${model}:${endpoint}`;
@@ -127,8 +132,11 @@ export class GoogleTranspiler {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
-                body: JSON.stringify(googleReq)
+                body: JSON.stringify(googleReq),
+                signal: controller.signal
             });
+
+            clearTimeout(timeoutId);
 
             if (!response.ok) {
                 const errorText = await response.text();
@@ -141,10 +149,17 @@ export class GoogleTranspiler {
             }
 
             return response;
-        } catch (error) {
+        } catch (error: any) {
+            if (timeoutId) clearTimeout(timeoutId);
+
             if (error instanceof ProviderError) {
                 throw error;
             }
+
+            if (error.name === 'AbortError' || error.name === 'TimeoutError' || controller.signal.aborted) {
+                throw new ProviderError('Google API request timed out', 'google', 408);
+            }
+
             logger.error('Google API call failed:', error);
             throw new ProviderError('Failed to communicate with Google', 'google');
         }

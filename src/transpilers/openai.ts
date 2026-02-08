@@ -109,13 +109,17 @@ export class OpenAITranspiler {
      */
     async callAPI(openaiReq: OpenAIRequest, token: string): Promise<Response> {
         try {
+            // Use AbortSignal.timeout for OpenAI as requested
+            const signal = AbortSignal.timeout(30000); // 30s timeout
+
             const response = await fetch(`${config.openai.apiUrl}/chat/completions`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
-                body: JSON.stringify(openaiReq)
+                body: JSON.stringify(openaiReq),
+                signal
             });
 
             if (!response.ok) {
@@ -129,10 +133,14 @@ export class OpenAITranspiler {
             }
 
             return response;
-        } catch (error) {
+        } catch (error: any) {
             if (error instanceof ProviderError) {
                 throw error;
             }
+            if (error.name === 'AbortError' || error.name === 'TimeoutError') {
+                throw new ProviderError('OpenAI API request timed out', 'openai', 408);
+            }
+
             logger.error('OpenAI API call failed:', error);
             throw new ProviderError('Failed to communicate with OpenAI', 'openai');
         }
