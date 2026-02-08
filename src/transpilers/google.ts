@@ -1,4 +1,3 @@
-
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { ProviderError, TranspilerError } from '../utils/errors.js';
@@ -256,7 +255,6 @@ export class GoogleTranspiler {
                 text: ''
             }
         })}\n\n`;
-
         try {
             while (true) {
                 const { done, value } = await reader.read();

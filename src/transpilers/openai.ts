@@ -1,4 +1,3 @@
-
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { ProviderError, TranspilerError } from '../utils/errors.js';
@@ -67,7 +66,6 @@ export class OpenAITranspiler {
                             `Dropping unsupported content types [${Array.from(unsupportedTypes).join(', ')}] in message ${msg.role}`
                         );
                     }
-
                     // Extract text from content blocks
                     content = msg.content
                         .filter(block => block.type === 'text' && block.text)
@@ -165,7 +163,6 @@ export class OpenAITranspiler {
             if (error.name === 'AbortError' || error.name === 'TimeoutError') {
                 throw new ProviderError('OpenAI API request timed out', 'openai', 408);
             }
-
             logger.error('OpenAI API call failed:', error);
             throw new ProviderError('Failed to communicate with OpenAI', 'openai');
         }
@@ -258,7 +255,6 @@ export class OpenAITranspiler {
                 text: ''
             }
         })}\n\n`;
-
         try {
             while (true) {
                 const { done, value } = await reader.read();
