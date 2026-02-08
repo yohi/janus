@@ -88,9 +88,27 @@ export const handleMessages = async (req: Request, res: Response) => {
                             const chunk = decoder.decode(value, { stream: true });
                             res.write(chunk);
                         }
+                    } catch (error) {
+                        logger.error('Error during Anthropic streaming:', error);
+                        // If we haven't ended the response yet, try to end it with an error event
+                        if (!res.writableEnded) {
+                            res.write(`event: error\ndata: ${JSON.stringify({
+                                type: 'error',
+                                error: {
+                                    type: 'api_error',
+                                    message: 'Stream interrupted'
+                                }
+                            })}\n\n`);
+                        }
                     } finally {
-                        res.end();
-                        reader.releaseLock();
+                        if (!res.writableEnded) {
+                            res.end();
+                        }
+                        try {
+                            reader.releaseLock();
+                        } catch (e) {
+                            // Ignore lock release errors
+                        }
                     }
                 } else {
                     const data = await response.json();

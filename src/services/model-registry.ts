@@ -1,6 +1,5 @@
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
-import { googleAuth } from '../auth/google.js';
 import { openaiAuth } from '../auth/openai.js';
 
 interface Model {
