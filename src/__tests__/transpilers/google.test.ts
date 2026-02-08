@@ -75,14 +75,7 @@ describe('Google Transpiler', () => {
             expect(googleReq.contents[0]?.parts[0]?.text).toBe('Part 1\nPart 2');
         });
 
-        it('should map model names correctly', () => {
-            const models = [
-                { anthropic: 'claude-3-5-sonnet-20241022', google: 'gemini-1.5-pro' },
-                { anthropic: 'claude-3-opus-20240229', google: 'gemini-1.5-pro' },
-                { anthropic: 'claude-3-sonnet-20240229', google: 'gemini-1.5-pro' },
-                { anthropic: 'claude-3-haiku-20240307', google: 'gemini-2.0-flash-exp' }
-            ];
-        });
+
 
         it('should handle generation config parameters', () => {
             const anthropicReq = {
@@ -159,6 +152,7 @@ describe('Google Transpiler', () => {
     });
 
     describe('convertStreamResponse', () => {
+        // TODO: Fix SSE event verification. Expected events are emitted but test fails on sequence check.
         it.skip('should emit proper SSE event sequence', async () => {
             const sseData = [
                 'data: {"candidates":[{"content":{"parts":[{"text":"Hello"}]}}]}',
