@@ -86,29 +86,55 @@ export const handleMessages = async (req: Request, res: Response) => {
                     const reader = response.body.getReader();
                     const decoder = new TextDecoder();
 
+                    // Handle client disconnect
+                    res.on('close', async () => {
+                        logger.info('Client disconnected, aborting upstream Anthropic request');
+                        controller.abort();
+                        try {
+                            await reader.cancel();
+                        } catch (e) {
+                            // Ignore cancel errors
+                        }
+                    });
+
                     try {
                         while (true) {
+                            // Check if client is still connected
+                            if (res.destroyed || res.writableEnded) {
+                                break;
+                            }
+
                             const { done, value } = await reader.read();
                             if (done) {
                                 break;
                             }
+                            
+                            // Check again before writing
+                            if (res.destroyed || res.writableEnded) {
+                                break;
+                            }
+
                             const chunk = decoder.decode(value, { stream: true });
                             res.write(chunk);
                         }
                     } catch (error) {
-                        logger.error('Error during Anthropic streaming:', error);
-                        // If we haven't ended the response yet, try to end it with an error event
-                        if (!res.writableEnded) {
-                            res.write(`event: error\ndata: ${JSON.stringify({
-                                type: 'error',
-                                error: {
-                                    type: 'api_error',
-                                    message: 'Stream interrupted'
-                                }
-                            })}\n\n`);
+                        if (error instanceof Error && error.name === 'AbortError') {
+                            logger.info('Stream aborted by client');
+                        } else {
+                            logger.error('Error during Anthropic streaming:', error);
+                            // If we haven't ended the response yet, try to end it with an error event
+                            if (!res.writableEnded && !res.destroyed) {
+                                res.write(`event: error\ndata: ${JSON.stringify({
+                                    type: 'error',
+                                    error: {
+                                        type: 'api_error',
+                                        message: 'Stream interrupted'
+                                    }
+                                })}\n\n`);
+                            }
                         }
                     } finally {
-                        if (!res.writableEnded) {
+                        if (!res.writableEnded && !res.destroyed) {
                             res.end();
                         }
                         try {
@@ -116,6 +142,8 @@ export const handleMessages = async (req: Request, res: Response) => {
                         } catch (e) {
                             // Ignore lock release errors
                         }
+                        // Ensure controller is aborted to cleanup
+                        controller.abort();
                     }
                 } else {
                     const data = await response.json();

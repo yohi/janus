@@ -32,10 +32,14 @@ ClaudeCodeから指定されたモデルは、以下のようにバックエン�
 
 ### パススルー機能
 
-マッピング表にないモデル名が指定された場合、ゲートウェイは以下のルールでバックエンドへリクエストをパススルー（そのまま転送）します。これにより、新しく追加されたモデルやExperimentalなモデルも即座に利用可能です。
+マッピング表にないモデル名が指定された場合、ゲートウェイは以下のルールでバックエンドへリクエストをパススルー（そのまま転送）します。
 
-*   **OpenAI**: `gpt-`, `o1-`〜`o9-`, `chatgpt-` で始まるモデル名、または `codex` を含むモデル名は、そのままOpenAIへ転送されます（例: `gpt-4-turbo`, `o1-preview`）。
-*   **Google**: `gemini-` で始まるモデル名、または `antigravity` を含むモデル名は、そのままGoogleへ転送されます（例: `gemini-1.5-flash`, `gemini-2.0-pro-exp`）。
+1.  **OpenAI**: `gpt-`, `o1-`〜`o9-`, `chatgpt-` で始まるモデル名、または `codex` を含むモデル名は、そのままOpenAIへ転送されます。
+2.  **Google**: `gemini-` で始まるモデル名、または `antigravity` を含むモデル名は、そのままGoogleへ転送されます。
+3.  **Anthropic (上記以外)**: 上記のいずれにも該当しないモデル名は、**Anthropic APIへ直接転送（パススルー）**されます。
+    *   **重要**: Anthropicへのパススルーを利用する場合、有効な `x-api-key` ヘッダーが必要です。ダミーのキーでは認証エラーとなります。
+
+これにより、新しく追加されたモデルやExperimentalなモデルも即座に利用可能です。
 
 ## インストールとセットアップ
 
@@ -95,8 +99,12 @@ ClaudeCodeがローカルゲートウェイを経由するように環境変数�
 # ゲートウェイのアドレス
 export ANTHROPIC_BASE_URL="http://localhost:4000"
 
-# APIキーチェックを回避するためのダミーキー（ゲートウェイ側で無視されます）
-export ANTHROPIC_API_KEY="sk-dummy-subscription-key"
+# 重要: Anthropicパススルーを使用する場合は有効なAPIキーを設定してください。
+# OpenAI/Google変換のみを使用する場合でも、クライアントの要件を満たすために
+# 何らかの値を設定する必要があります（例: ダミーキー）。
+export ANTHROPIC_API_KEY="sk-ant-api03-..." 
+# または
+export ANTHROPIC_API_KEY="dummy-key-for-gateway"
 ```
 
 ### 4. ClaudeCodeの実行
