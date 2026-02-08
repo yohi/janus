@@ -334,7 +334,7 @@ export class OpenAITranspiler {
                 yield `event: message_delta\ndata: ${JSON.stringify({
                     type: 'message_delta',
                     delta: {
-                        stop_reason: this.mapFinishReason(undefined) || 'unknown',
+                        stop_reason: this.mapFinishReason(undefined) ?? 'end_turn',
                         stop_sequence: null
                     },
                     usage: {
