@@ -19,16 +19,18 @@ export const config = {
   
   // Google (Antigravity) configuration
   google: {
-    clientId: process.env.CSG_GOOGLE_CLIENT_ID || '',
-    clientSecret: process.env.CSG_GOOGLE_CLIENT_SECRET || '',
+    clientId: process.env.CSG_GOOGLE_CLIENT_ID || '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com',
+    clientSecret: process.env.CSG_GOOGLE_CLIENT_SECRET || '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',
     authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     tokenUrl: 'https://oauth2.googleapis.com/token',
     apiUrl: 'https://daily-cloudcode-pa.googleapis.com',
     tokenPath: join(homedir(), '.csg', 'google-token.json'),
     scopes: [
-      'https://www.googleapis.com/auth/daily-cloudcode-pa',
       'https://www.googleapis.com/auth/cloud-platform',
-      'email'
+      'https://www.googleapis.com/auth/userinfo.email',
+      'https://www.googleapis.com/auth/userinfo.profile',
+      'https://www.googleapis.com/auth/cclog',
+      'https://www.googleapis.com/auth/experimentsandconfigs'
     ],
     redirectUri: 'http://localhost:51121/oauth-callback'
   },
