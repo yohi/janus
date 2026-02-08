@@ -55,6 +55,19 @@ export class OpenAITranspiler {
                 if (typeof msg.content === 'string') {
                     content = msg.content;
                 } else if (Array.isArray(msg.content)) {
+                    // Check for unsupported content types
+                    const unsupportedTypes = new Set(
+                        msg.content
+                            .filter(block => block.type !== 'text')
+                            .map(block => block.type)
+                    );
+
+                    if (unsupportedTypes.size > 0) {
+                        logger.warn(
+                            `Dropping unsupported content types [${Array.from(unsupportedTypes).join(', ')}] in message ${msg.role}`
+                        );
+                    }
+
                     // Extract text from content blocks
                     content = msg.content
                         .filter(block => block.type === 'text' && block.text)
@@ -87,7 +100,7 @@ export class OpenAITranspiler {
             };
 
             // Add optional parameters only if defined
-            if (anthropicReq.max_tokens) {
+            if (anthropicReq.max_tokens !== undefined) {
                 openaiReq.max_tokens = anthropicReq.max_tokens;
             }
             if (anthropicReq.temperature !== undefined) {
@@ -207,6 +220,7 @@ export class OpenAITranspiler {
 
         // Generate message ID
         const messageId = `msg_${Math.random().toString(36).substring(2, 15)}`;
+        let terminalEventsEmitted = false;
 
         // Emit message_start
         yield `event: message_start\ndata: ${JSON.stringify({
@@ -266,6 +280,7 @@ export class OpenAITranspiler {
 
                             // Handle finish reason
                             if (parsed.choices?.[0]?.finish_reason) {
+                                terminalEventsEmitted = true;
                                 // Emit content_block_stop
                                 yield `event: content_block_stop\ndata: ${JSON.stringify({
                                     type: 'content_block_stop',
@@ -296,6 +311,30 @@ export class OpenAITranspiler {
                 }
             }
         } finally {
+            if (!terminalEventsEmitted) {
+                // Emit content_block_stop
+                yield `event: content_block_stop\ndata: ${JSON.stringify({
+                    type: 'content_block_stop',
+                    index: 0
+                })}\n\n`;
+
+                // Emit message_delta
+                yield `event: message_delta\ndata: ${JSON.stringify({
+                    type: 'message_delta',
+                    delta: {
+                        stop_reason: this.mapFinishReason(undefined) || 'unknown',
+                        stop_sequence: null
+                    },
+                    usage: {
+                        output_tokens: 0
+                    }
+                })}\n\n`;
+
+                // Emit message_stop
+                yield `event: message_stop\ndata: ${JSON.stringify({
+                    type: 'message_stop'
+                })}\n\n`;
+            }
             reader.releaseLock();
         }
     }
