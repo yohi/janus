@@ -39,15 +39,18 @@ describe('Antigravity Integration', () => {
     
     // Mock global fetch
     const fetchMock = vi.fn();
+    let originalFetch: typeof global.fetch;
     
     beforeEach(() => {
+        originalFetch = global.fetch;
         vi.stubGlobal('fetch', fetchMock);
         // Setup default auth mock
         vi.mocked(googleAuth.getValidToken).mockResolvedValue(MOCK_TOKEN);
     });
 
     afterEach(() => {
-        vi.stubGlobal('fetch', undefined);
+        vi.stubGlobal('fetch', originalFetch);
+        fetchMock.mockReset();
         vi.clearAllMocks();
     });
 
@@ -64,7 +67,13 @@ describe('Antigravity Integration', () => {
             // Mock Chat Generation
             if (url.includes('generateContent')) {
                 // Verify Auth Header
-                const authHeader = options.headers['Authorization'];
+                let authHeader;
+                if (options.headers && typeof options.headers.get === 'function') {
+                    authHeader = options.headers.get('Authorization');
+                } else {
+                    authHeader = options.headers['Authorization'] || options.headers.Authorization;
+                }
+
                 if (authHeader !== `Bearer ${MOCK_TOKEN}`) {
                     return new Response('Unauthorized', { status: 401 });
                 }
@@ -140,7 +149,7 @@ describe('Antigravity Integration', () => {
                 stream: false
             });
 
-        expect(response.status).toBe(500); // or 401 depending on error handling
+        expect(response.status).toBe(500);
         expect(response.body.error).toBeDefined();
     });
 });
