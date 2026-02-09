@@ -5,6 +5,7 @@ import { logger } from './utils/logger.js';
 import { CSGError } from './utils/errors.js';
 import { handleMessages } from './routes/messages.js';
 import { handleModels } from './routes/models.js';
+import { handleUserMe, handleOrganizations, handlePlans } from './routes/mock-auth.js';
 
 const app = express();
 
@@ -12,10 +13,20 @@ const app = express();
 app.use(express.json({ limit: '50mb' })); // Large file context support
 
 // CORS for localhost only
+const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:8080',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:8080'
+];
+
 app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', 'http://localhost:*');
+    const origin = req.headers.origin;
+    if (origin && allowedOrigins.includes(origin)) {
+        res.header('Access-Control-Allow-Origin', origin);
+    }
     res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, anthropic-version');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, anthropic-version, x-api-key');
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
     }
@@ -25,6 +36,11 @@ app.use((req, res, next) => {
 // Routes - Anthropic API compatible endpoints
 app.post('/v1/messages', handleMessages);
 app.get('/v1/models', handleModels);
+
+// Mock Auth & Organization Endpoints for ClaudeCode CLI
+app.get('/v1/users/me', handleUserMe);
+app.get('/v1/organizations', handleOrganizations);
+app.get('/v1/plans', handlePlans);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -64,9 +80,29 @@ export const startServer = () => {
     });
 };
 
-// Run server only if executed directly
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-    startServer();
+// Always start server when running this file directly or via tsx
+const isMainModule = process.argv[1] === fileURLToPath(import.meta.url) ||
+    process.argv[1]?.endsWith('index.ts') ||
+    process.argv.some(arg => arg.includes('tsx') || arg.includes('ts-node'));
+
+if (isMainModule) {
+    const server = startServer();
+
+    // Graceful shutdown
+    process.on('SIGTERM', () => {
+        logger.info('SIGTERM signal received: closing HTTP server');
+        server.close(() => {
+            logger.info('HTTP server closed');
+        });
+    });
+
+    process.on('uncaughtException', (err) => {
+        logger.error('Uncaught Exception:', err);
+    });
+
+    process.on('exit', (code) => {
+        logger.info(`Process exiting with code: ${code}`);
+    });
 }
 
 export default app;

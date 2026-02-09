@@ -8,6 +8,8 @@ describe('TokenStore', () => {
     let tokenStore: TokenStore;
     let testDir: string;
     let testTokenPath: string;
+    let originalHome: string | undefined;
+    let originalUserProfile: string | undefined;
 
     beforeEach(async () => {
         // Create a temporary directory for test tokens
@@ -15,11 +17,20 @@ describe('TokenStore', () => {
         await fs.mkdir(testDir, { recursive: true });
         testTokenPath = join(testDir, 'test-token.json');
 
-        // Use a test encryption key
-        tokenStore = new TokenStore('test-encryption-key-for-testing');
+        // Mock HOME and USERPROFILE to isolate tests
+        originalHome = process.env.HOME;
+        originalUserProfile = process.env.USERPROFILE;
+        process.env.HOME = testDir;
+        process.env.USERPROFILE = testDir;
+
+        tokenStore = new TokenStore('test-encryption-key-for-testing', 'test-salt');
     });
 
     afterEach(async () => {
+        // Restore environment variables
+        process.env.HOME = originalHome;
+        process.env.USERPROFILE = originalUserProfile;
+
         // Clean up test directory
         try {
             await fs.rm(testDir, { recursive: true, force: true });
@@ -159,17 +170,17 @@ describe('TokenStore', () => {
         });
     });
 
-    describe('constructor enforcement', () => {
-        it('should throw error if key is missing', () => {
-            expect(() => new TokenStore(undefined)).toThrow('Fatal: Secure encryption key not configured.');
+    describe('constructor auto-initialization', () => {
+        it('should not throw if key is missing and handle auto-generation', () => {
+            expect(() => new TokenStore(undefined)).not.toThrow();
         });
 
-        it('should throw error if key is default value', () => {
-            expect(() => new TokenStore('default-key-change-me')).toThrow('Fatal: Secure encryption key not configured.');
+        it('should not throw if key is default value', () => {
+            expect(() => new TokenStore('default-key-change-me')).not.toThrow();
         });
 
         it('should not throw if key is provided', () => {
-            expect(() => new TokenStore('secure-key')).not.toThrow();
+            expect(() => new TokenStore('secure-key', 'salt')).not.toThrow();
         });
     });
 });

@@ -4,10 +4,10 @@ set -e
 # Claude Subscription Gateway Integration Test Script
 
 # 1. 環境設定
-export CSG_ENCRYPTION_KEY="test-encryption-key-must-be-long-enough-123456"
-export CSG_SALT="test-salt-value-for-integration-tests"
-export CSG_PORT=4001
-export CSG_LOG_LEVEL=info
+export JANUS_ENCRYPTION_KEY="test-encryption-key-must-be-long-enough-123456"
+export JANUS_SALT="test-salt-value-for-integration-tests"
+export JANUS_PORT=4001
+export JANUS_LOG_LEVEL=info
 export NODE_ENV=test
 
 # 色の定義
@@ -22,7 +22,7 @@ echo "Building project..."
 npm run build
 
 # 3. サーバーの起動 (バックグラウンド)
-echo "Starting server on port $CSG_PORT..."
+echo "Starting server on port $JANUS_PORT..."
 npm run start &
 SERVER_PID=$!
 
@@ -40,7 +40,7 @@ trap cleanup EXIT
 echo "Waiting for server to be ready..."
 MAX_RETRIES=30
 RETRY_COUNT=0
-until curl -s http://localhost:$CSG_PORT/health > /dev/null; do
+until curl -s http://localhost:$JANUS_PORT/health > /dev/null; do
   sleep 1
   RETRY_COUNT=$((RETRY_COUNT + 1))
   if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
@@ -55,7 +55,7 @@ echo -e "${GREEN}Server is up and running!${NC}"
 
 # Test /health
 echo -n "Testing /health endpoint... "
-HEALTH_RES=$(curl -s http://localhost:$CSG_PORT/health)
+HEALTH_RES=$(curl -s http://localhost:$JANUS_PORT/health)
 if [[ $HEALTH_RES == *"\"status\":\"ok\""* ]]; then
   echo -e "${GREEN}PASS${NC}"
 else
@@ -66,7 +66,7 @@ fi
 
 # Test /v1/models
 echo -n "Testing /v1/models endpoint... "
-MODELS_RES=$(curl -s http://localhost:$CSG_PORT/v1/models)
+MODELS_RES=$(curl -s http://localhost:$JANUS_PORT/v1/models)
 if [[ $MODELS_RES == *"\"object\":\"list\""* ]] && [[ $MODELS_RES == *"\"data\""* ]]; then
   echo -e "${GREEN}PASS${NC}"
 else
@@ -79,7 +79,7 @@ fi
 # 注: トークンがないため、通常は 401 Unauthorized または 500 (トークンファイル不在時) を期待します。
 # ルーティングが機能していることを確認するのが目的です。
 echo -n "Testing /v1/messages endpoint (routing check)... "
-RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:$CSG_PORT/v1/messages \
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:$JANUS_PORT/v1/messages \
   -H "Content-Type: application/json" \
   -H "anthropic-version: 2023-06-01" \
   -d '{

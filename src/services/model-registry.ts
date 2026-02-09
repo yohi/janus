@@ -109,7 +109,27 @@ export class ModelRegistryService {
             { id: 'gemini-1.5-pro', object: 'model', created: Date.now(), owned_by: 'google' },
             { id: 'gemini-1.5-flash', object: 'model', created: Date.now(), owned_by: 'google' },
             { id: 'gemini-2.0-flash-exp', object: 'model', created: Date.now(), owned_by: 'google' },
-            { id: 'gemini-2.0-pro-exp-0205', object: 'model', created: Date.now(), owned_by: 'google' }
+            { id: 'gemini-2.0-pro-exp-0205', object: 'model', created: Date.now(), owned_by: 'google' },
+            
+            // Add Claude aliases for compatibility
+            // These allow ClaudeCode CLI to recognize supported models and map them to backend models
+            // 2026 Compatible Models
+            { id: 'claude-4-5-sonnet-20251022', object: 'model', created: Date.now(), owned_by: 'anthropic' },
+            { id: 'claude-4-5-sonnet-latest', object: 'model', created: Date.now(), owned_by: 'anthropic' },
+            { id: 'claude-4-6-opus-20260229', object: 'model', created: Date.now(), owned_by: 'anthropic' },
+            { id: 'claude-4-6-opus-latest', object: 'model', created: Date.now(), owned_by: 'anthropic' },
+            { id: 'claude-4-5-haiku-20251022', object: 'model', created: Date.now(), owned_by: 'anthropic' },
+            { id: 'claude-4-5-haiku-latest', object: 'model', created: Date.now(), owned_by: 'anthropic' },
+
+            // Legacy Models (2024)
+            { id: 'claude-3-5-sonnet-20241022', object: 'model', created: Date.now(), owned_by: 'anthropic' },
+            { id: 'claude-3-5-sonnet-latest', object: 'model', created: Date.now(), owned_by: 'anthropic' },
+            { id: 'claude-3-5-haiku-20241022', object: 'model', created: Date.now(), owned_by: 'anthropic' },
+            { id: 'claude-3-5-haiku-latest', object: 'model', created: Date.now(), owned_by: 'anthropic' },
+            { id: 'claude-3-opus-20240229', object: 'model', created: Date.now(), owned_by: 'anthropic' },
+            { id: 'claude-3-opus-latest', object: 'model', created: Date.now(), owned_by: 'anthropic' },
+            { id: 'claude-3-sonnet-20240229', object: 'model', created: Date.now(), owned_by: 'anthropic' },
+            { id: 'claude-3-haiku-20240307', object: 'model', created: Date.now(), owned_by: 'anthropic' }
         );
 
         // Deduplicate by ID

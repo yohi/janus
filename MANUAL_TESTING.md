@@ -14,18 +14,19 @@
 
 ```bash
 # Server Configuration
-CSG_PORT=4000
-CSG_LOG_LEVEL=info
+JANUS_PORT=4000
+JANUS_LOG_LEVEL=info
 
 # Encryption Key (必須: 設定しない場合はエラーで起動しません)
-CSG_ENCRYPTION_KEY=your-secure-encryption-key-here
+JANUS_ENCRYPTION_KEY=your-secure-encryption-key-here
 
 # OpenAI OAuth Configuration
-CSG_OPENAI_CLIENT_ID=your-openai-client-id
+JANUS_OPENAI_CLIENT_ID=your-openai-client-id
 
 # Google OAuth Configuration
-CSG_GOOGLE_CLIENT_ID=your-google-client-id
-CSG_GOOGLE_CLIENT_SECRET=your-google-client-secret
+# 注: ANTIGRAVITY_CLIENT_ID / ANTIGRAVITY_CLIENT_SECRET が設定されている場合はそれがデフォルトで使用されます
+JANUS_GOOGLE_CLIENT_ID=your-google-client-id
+JANUS_GOOGLE_CLIENT_SECRET=your-google-client-secret
 ```
 
 ## テストシナリオ
@@ -322,12 +323,12 @@ ClaudeCode CLIでコマンドを実行し、CSGを経由してOpenAI/Googleの�
 
 ### ポート競合
 
-- `CSG_PORT` 環境変数で別のポートを指定
+- `JANUS_PORT` 環境変数で別のポートを指定
 
 ### ログレベルの変更
 
 ```bash
-CSG_LOG_LEVEL=debug npm run start
+JANUS_LOG_LEVEL=debug npm run start
 ```
 
 ---

@@ -15,6 +15,15 @@ export class ProviderFactory {
         if (this.googleAdapter.supports(model)) {
             return this.googleAdapter;
         }
+        
+        // Aliases Mapping (Default to Google for now)
+        // If the model starts with 'claude-', treat it as an alias and route to Google
+        // The Google adapter's transpiler handles the mapping from Claude model names to Gemini models
+        // Also capture short names like "sonnet-4-5" if they appear
+        if (model.startsWith('claude-') || model.includes('sonnet') || model.includes('opus') || model.includes('haiku')) {
+            return this.googleAdapter;
+        }
+
         return this.anthropicAdapter;
     }
 }

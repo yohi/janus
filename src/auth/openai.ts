@@ -1,6 +1,5 @@
 import open from 'open';
 import { createServer, type Server } from 'http';
-import { parse as parseUrl } from 'url';
 import crypto from 'crypto';
 import { config } from '../config.js';
 import { tokenStore } from './token-store.js';
@@ -48,26 +47,13 @@ export class OpenAIAuth {
             });
 
             const server = createServer((req, res) => {
-                const url = parseUrl(req.url || '', true);
+                const url = new URL(req.url || '', `http://${req.headers.host}`);
+                const redirectUrl = new URL(config.openai.redirectUri);
 
-                const redirectUrl = parseUrl(config.openai.redirectUri);
                 if (url.pathname === redirectUrl.pathname) {
-                    const codeParam = url.query.code;
-                    const stateParam = url.query.state;
-                    const errorParam = url.query.error;
-
-                    if (Array.isArray(codeParam) || Array.isArray(stateParam) || Array.isArray(errorParam)) {
-                        const msg = 'Multiple query parameters received for code, state, or error';
-                        logger.warn(msg);
-                        res.writeHead(400, { 'Content-Type': 'text/html' });
-                        res.end(`<h1>Authentication Failed</h1><p>Invalid request: ${msg}</p>`);
-                        codeResolver('');
-                        return;
-                    }
-
-                    const code = codeParam as string | undefined;
-                    const state = stateParam as string | undefined;
-                    const error = errorParam as string | undefined;
+                    const code = url.searchParams.get('code');
+                    const state = url.searchParams.get('state');
+                    const error = url.searchParams.get('error');
 
                     if (error) {
                         const safeError = this.escapeHtml(error);
@@ -93,13 +79,15 @@ export class OpenAIAuth {
                 }
             });
 
-            server.on('error', (err) => {
-                logger.error('Local OAuth server error:', err);
-                codeResolver('');
-                reject(err);
+            server.on('error', (err: any) => {
+                if (err.code === 'EADDRINUSE') {
+                    reject(new Error(`Port ${port} is already in use.`));
+                } else {
+                    reject(err);
+                }
             });
 
-            const redirectUrl = parseUrl(config.openai.redirectUri);
+            const redirectUrl = new URL(config.openai.redirectUri);
             const port = parseInt(redirectUrl.port || '1455', 10);
 
             server.listen(port, 'localhost', () => {
@@ -122,7 +110,7 @@ export class OpenAIAuth {
         const state = crypto.randomBytes(16).toString('hex');
         const { server, code: codePromise } = await this.startLocalServer(state);
 
-        const clientId = config.openai.clientId;
+        const clientId = config.openai.clientId!;
         const redirectUri = config.openai.redirectUri;
 
         const params = new URLSearchParams({
@@ -161,7 +149,7 @@ export class OpenAIAuth {
         logger.info('Exchanging code for token...');
 
         const tokenBody = new URLSearchParams({
-            client_id: config.openai.clientId,
+            client_id: config.openai.clientId!,
             grant_type: 'authorization_code',
             code: code,
             code_verifier: codeVerifier,
@@ -218,7 +206,7 @@ export class OpenAIAuth {
 
         try {
             const body = new URLSearchParams({
-                client_id: config.openai.clientId,
+                client_id: config.openai.clientId!,
                 refresh_token: tokenData.refresh_token,
                 grant_type: 'refresh_token'
             });
