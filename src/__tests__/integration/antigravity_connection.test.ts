@@ -40,15 +40,15 @@ import app from '../../index.js';
 describe('Antigravity Integration', () => {
     const MOCK_TOKEN = 'mock_access_token_123';
     const MOCK_PROJECT_ID = 'mock-project-id';
-    
+
     // Mock global fetch
     const fetchMock = vi.fn();
     let originalFetch: typeof global.fetch;
-    
+
     beforeEach(() => {
         originalFetch = global.fetch;
         vi.stubGlobal('fetch', fetchMock);
-        
+
         // Setup default token store state (Authenticated)
         vi.mocked(tokenStore.load).mockResolvedValue({
             access_token: MOCK_TOKEN,
@@ -138,7 +138,7 @@ describe('Antigravity Integration', () => {
 
         // Verify that googleAuth actually called tokenStore
         expect(tokenStore.load).toHaveBeenCalled();
-        
+
         // Verify API Call
         const generateCall = fetchMock.mock.calls.find(call => call[0].includes('generateContent'));
         expect(generateCall).toBeDefined();
@@ -160,8 +160,9 @@ describe('Antigravity Integration', () => {
                 stream: false
             });
 
-        expect(response.status).toBe(500);
+        expect(response.status).toBe(401);
         expect(response.body.error).toBeDefined();
+        expect(response.body.error.type).toBe('authentication_error');
     });
 });
 
