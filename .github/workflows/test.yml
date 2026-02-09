@@ -1,0 +1,38 @@
+name: Test
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+        env:
+          ANTIGRAVITY_CLIENT_ID: dummy_id
+          ANTIGRAVITY_CLIENT_SECRET: dummy_secret
+
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          ANTIGRAVITY_CLIENT_ID: dummy_id
+          ANTIGRAVITY_CLIENT_SECRET: dummy_secret
+          JANUS_ENCRYPTION_KEY: "test-encryption-key-must-be-long-enough-123456"
+          JANUS_SALT: "test-salt-value-for-integration-tests"
