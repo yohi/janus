@@ -13,8 +13,18 @@ const app = express();
 app.use(express.json({ limit: '50mb' })); // Large file context support
 
 // CORS for localhost only
+const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:8080',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:8080'
+];
+
 app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', 'http://localhost:*');
+    const origin = req.headers.origin;
+    if (origin && allowedOrigins.includes(origin)) {
+        res.header('Access-Control-Allow-Origin', origin);
+    }
     res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, anthropic-version, x-api-key');
     if (req.method === 'OPTIONS') {

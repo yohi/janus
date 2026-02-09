@@ -16,7 +16,7 @@ interface AnthropicRequest {
     temperature?: number;
     top_p?: number;
     stream?: boolean;
-    system?: string;
+    system?: string | string[];
     tools?: AnthropicTool[];
 }
 
@@ -44,11 +44,13 @@ interface GoogleRequest {
     tools?: any[];
     thinkingConfig?: {
         thinkingBudget?: number;
+        thinkingLevel?: number;
+        includeThoughts?: boolean;
     };
 }
 
 export class GoogleTranspiler {
-    private projectId: string | null = null;
+    private projectIdCache = new Map<string, string>();
 
     /**
      * Convert Anthropic request to Google Gemini format
@@ -105,8 +107,12 @@ export class GoogleTranspiler {
                     systemText = anthropicReq.system;
                 } else if (Array.isArray(anthropicReq.system)) {
                     systemText = (anthropicReq.system as any[])
-                        .filter((p: any) => p.type === 'text')
-                        .map((p: any) => p.text)
+                        .map((p: any) => {
+                            if (typeof p === 'string') return p;
+                            if (p && p.type === 'text' && p.text) return p.text;
+                            return '';
+                        })
+                        .filter(Boolean)
                         .join('\n');
                 }
 
@@ -124,7 +130,8 @@ export class GoogleTranspiler {
             }
 
             // Add thinking config for opus/thinking models
-            const thinkingConfig = this.getThinkingConfig(anthropicReq.model);
+            const googleModel = this.mapModel(anthropicReq.model);
+            const thinkingConfig = this.getThinkingConfig(googleModel);
             if (thinkingConfig) {
                 googleReq.thinkingConfig = thinkingConfig;
             }
@@ -176,14 +183,13 @@ export class GoogleTranspiler {
     /**
      * Get thinking config for models that support extended thinking
      */
-    private getThinkingConfig(model: string): { thinkingBudget: number } | null {
+    private getThinkingConfig(model: string): { thinkingLevel?: number, thinkingBudget?: number, includeThoughts?: boolean } | null {
         // Models that support thinking/reasoning
-        if (model.includes('thinking') ||
-            model.includes('opus') ||
-            model.includes('o1') ||
-            model.includes('o3')) {
+        // Check for Google Gemini model identifiers (gemini, flash, 3)
+        if (model.includes('gemini') && (model.includes('flash') || model.includes('3'))) {
             return {
-                thinkingBudget: 8192 // Default thinking budget
+                thinkingLevel: 2, // Default thinking level
+                includeThoughts: true
             };
         }
         return null;
@@ -242,7 +248,9 @@ export class GoogleTranspiler {
         if (process.env.JANUS_ANTIGRAVITY_PROJECT_ID) {
             return process.env.JANUS_ANTIGRAVITY_PROJECT_ID;
         }
-        if (this.projectId) return this.projectId;
+        if (this.projectIdCache.has(token)) {
+            return this.projectIdCache.get(token)!;
+        }
 
         const headers = {
             'Authorization': `Bearer ${token}`,
@@ -253,16 +261,33 @@ export class GoogleTranspiler {
             'Client-Metadata': '{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}'
         };
 
+        const fetchWithTimeout = async (url: string) => {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ metadata: { ideType: 'IDE_UNSPECIFIED', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' } }),
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+                return response;
+            } catch (error: any) {
+                clearTimeout(timeoutId);
+                if (error.name === 'AbortError') {
+                    throw new Error(`Request to ${url} timed out`);
+                }
+                throw error;
+            }
+        };
+
         try {
             // Try loadCodeAssist first
             const loadUrl = `${config.google.apiUrl}/v1internal:loadCodeAssist`;
             logger.info(`Fetching Project ID from ${loadUrl}`);
 
-            const loadResp = await fetch(loadUrl, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({ metadata: { ideType: 'IDE_UNSPECIFIED', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' } })
-            });
+            const loadResp = await fetchWithTimeout(loadUrl);
 
             if (loadResp.ok) {
                 const data = await loadResp.json();
@@ -271,7 +296,7 @@ export class GoogleTranspiler {
                     : data.cloudaicompanionProject?.id;
 
                 if (pid) {
-                    this.projectId = pid;
+                    this.projectIdCache.set(token, pid);
                     logger.info(`Resolved Project ID: ${pid}`);
                     return pid;
                 }
@@ -280,11 +305,7 @@ export class GoogleTranspiler {
             // Fallback to onboardUser if loadCodeAssist fails or returns no ID
             logger.info('loadCodeAssist failed or returned no ID, trying onboardUser...');
             const onboardUrl = `${config.google.apiUrl}/v1internal:onboardUser`;
-            const onboardResp = await fetch(onboardUrl, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({ metadata: { ideType: 'IDE_UNSPECIFIED', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' } })
-            });
+            const onboardResp = await fetchWithTimeout(onboardUrl);
 
             if (onboardResp.ok) {
                 const data = await onboardResp.json();
@@ -293,7 +314,7 @@ export class GoogleTranspiler {
                     : data.cloudaicompanionProject?.id;
 
                 if (pid) {
-                    this.projectId = pid;
+                    this.projectIdCache.set(token, pid);
                     logger.info(`Onboarded Project ID: ${pid}`);
                     return pid;
                 }
@@ -354,7 +375,7 @@ export class GoogleTranspiler {
             if (googleReq.thinkingConfig) {
                 // Check if the original Anthropic model supports thinking
                 // We use the already computed googleReq.thinkingConfig which comes from anthropicReq.model
-                if (this.getThinkingConfig(anthropicModel)) {
+                if (this.getThinkingConfig(model)) {
                     requestBody.thinkingConfig = googleReq.thinkingConfig;
                 } else {
                     logger.warn(`Dropping thinkingConfig for model ${anthropicModel}`);
