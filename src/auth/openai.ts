@@ -130,7 +130,11 @@ export class OpenAIAuth {
         logger.info(`\n🔐 OpenAI Authentication Required`);
         logger.info(`🌐 Opening browser: ${authUrl}\n`);
 
-        await open(authUrl);
+        try {
+            await open(authUrl);
+        } catch (error) {
+            logger.warn(`Failed to open browser automatically: ${authUrl}`, error);
+        }
 
         logger.info('⏳ Waiting for authorization...');
 
