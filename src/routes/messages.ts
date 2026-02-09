@@ -32,6 +32,9 @@ export const handleMessages = async (req: Request, res: Response) => {
             return;
         }
 
+        const statusCode = (error as any).status || (error as any).statusCode || 500;
+        const message = error instanceof Error ? error.message : 'Internal server error';
+
         if (streamVal || res.headersSent) {
             // Error during streaming or streaming intended
             if (!res.headersSent) {
@@ -43,17 +46,17 @@ export const handleMessages = async (req: Request, res: Response) => {
             res.write(`event: error\ndata: ${JSON.stringify({
                 type: 'error',
                 error: {
-                    type: 'internal_server_error',
-                    message: (error instanceof Error ? error.message : 'Internal server error occurred during streaming')
+                    type: statusCode === 401 ? 'authentication_error' : 'internal_server_error',
+                    message: message
                 }
             })}\n\n`);
             res.end();
         } else {
-            res.status(500).json({
+            res.status(statusCode).json({
                 type: 'error',
                 error: {
-                    type: 'internal_server_error',
-                    message: 'Internal server error'
+                    type: statusCode === 401 ? 'authentication_error' : 'internal_server_error',
+                    message: message
                 }
             });
         }
