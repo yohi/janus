@@ -1,7 +1,6 @@
 import axios from 'axios';
 import open from 'open';
 import { createServer, type Server } from 'http';
-import { parse as parseUrl } from 'url';
 import { config } from '../config.js';
 import { tokenStore } from './token-store.js';
 import { logger } from '../utils/logger.js';
@@ -26,30 +25,18 @@ export class GoogleAuth {
     }
 
     private async startLocalServer(): Promise<{ server: Server; code: Promise<string> }> {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             let codeResolver: (code: string) => void;
             const codePromise = new Promise<string>((res) => {
                 codeResolver = res;
             });
 
             const server = createServer((req, res) => {
-                const url = parseUrl(req.url || '', true);
+                const url = new URL(req.url || '', `http://${req.headers.host}`);
 
                 if (url.pathname === '/oauth-callback') {
-                    const codeParam = url.query.code;
-                    const errorParam = url.query.error;
-
-                    if (Array.isArray(codeParam) || Array.isArray(errorParam)) {
-                        const msg = 'Multiple query parameters received for code or error';
-                        logger.warn(msg);
-                        res.writeHead(400, { 'Content-Type': 'text/html' });
-                        res.end(`<h1>Authentication Failed</h1><p>Invalid request: ${msg}</p>`);
-                        codeResolver('');
-                        return;
-                    }
-
-                    const code = codeParam as string | undefined;
-                    const error = errorParam as string | undefined;
+                    const code = url.searchParams.get('code');
+                    const error = url.searchParams.get('error');
 
                     if (error) {
                         const safeError = this.escapeHtml(error);
@@ -68,6 +55,14 @@ export class GoogleAuth {
                 }
             });
 
+            server.on('error', (err: any) => {
+                if (err.code === 'EADDRINUSE') {
+                    reject(new Error('Port 51121 is already in use. Please kill the hanging process or wait a moment.'));
+                } else {
+                    reject(err);
+                }
+            });
+
             server.listen(51121, 'localhost', () => {
                 logger.debug('Local OAuth server started on http://localhost:51121');
                 resolve({ server, code: codePromise });
@@ -77,7 +72,7 @@ export class GoogleAuth {
 
     private buildAuthUrl(): string {
         const params = new URLSearchParams({
-            client_id: config.google.clientId,
+            client_id: config.google.clientId!,
             redirect_uri: config.google.redirectUri,
             response_type: 'code',
             scope: config.google.scopes.join(' '),
@@ -93,8 +88,8 @@ export class GoogleAuth {
             const response = await axios.post<TokenResponse>(
                 config.google.tokenUrl,
                 {
-                    client_id: config.google.clientId,
-                    client_secret: config.google.clientSecret,
+                    client_id: config.google.clientId!,
+                    client_secret: config.google.clientSecret!,
                     code,
                     redirect_uri: config.google.redirectUri,
                     grant_type: 'authorization_code'
@@ -163,8 +158,8 @@ export class GoogleAuth {
             const response = await axios.post<TokenResponse>(
                 config.google.tokenUrl,
                 {
-                    client_id: config.google.clientId,
-                    client_secret: config.google.clientSecret,
+                    client_id: config.google.clientId!,
+                    client_secret: config.google.clientSecret!,
                     refresh_token: tokenData.refresh_token,
                     grant_type: 'refresh_token'
                 },

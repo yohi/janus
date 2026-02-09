@@ -1,4 +1,5 @@
 import { createParser, type EventSourceMessage } from 'eventsource-parser';
+import { randomUUID } from 'crypto';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { ProviderError, TranspilerError } from '../utils/errors.js';
@@ -16,6 +17,13 @@ interface AnthropicRequest {
     top_p?: number;
     stream?: boolean;
     system?: string;
+    tools?: AnthropicTool[];
+}
+
+interface AnthropicTool {
+    name: string;
+    description?: string;
+    input_schema?: any;
 }
 
 interface GoogleContent {
@@ -33,9 +41,15 @@ interface GoogleRequest {
     systemInstruction?: {
         parts: Array<{ text: string }>;
     };
+    tools?: any[];
+    thinkingConfig?: {
+        thinkingBudget?: number;
+    };
 }
 
 export class GoogleTranspiler {
+    private projectId: string | null = null;
+
     /**
      * Convert Anthropic request to Google Gemini format
      */
@@ -86,9 +100,33 @@ export class GoogleTranspiler {
 
             // Add system instruction if present
             if (anthropicReq.system) {
-                googleReq.systemInstruction = {
-                    parts: [{ text: anthropicReq.system }]
-                };
+                let systemText = '';
+                if (typeof anthropicReq.system === 'string') {
+                    systemText = anthropicReq.system;
+                } else if (Array.isArray(anthropicReq.system)) {
+                    systemText = (anthropicReq.system as any[])
+                        .filter((p: any) => p.type === 'text')
+                        .map((p: any) => p.text)
+                        .join('\n');
+                }
+
+                if (systemText) {
+                    googleReq.systemInstruction = {
+                        parts: [{ text: systemText }]
+                    };
+                }
+            }
+
+            // Add tools if present
+            const transformedTools = this.transformTools(anthropicReq.tools);
+            if (transformedTools && transformedTools.length > 0) {
+                googleReq.tools = transformedTools;
+            }
+
+            // Add thinking config for opus/thinking models
+            const thinkingConfig = this.getThinkingConfig(anthropicReq.model);
+            if (thinkingConfig) {
+                googleReq.thinkingConfig = thinkingConfig;
             }
 
             return googleReq;
@@ -99,29 +137,183 @@ export class GoogleTranspiler {
     }
 
     /**
-     * Map Anthropic model to Google model
+     * Transform Anthropic tools to Gemini format
      */
-    private mapModel(anthropicModel: string): string {
-        const modelMap: Record<string, string> = {
-            'claude-3-5-sonnet-20241022': 'gemini-1.5-pro',
-            'claude-3-opus-20240229': 'gemini-1.5-pro',
-            'claude-3-sonnet-20240229': 'gemini-1.5-pro',
-            'claude-3-haiku-20240307': 'gemini-2.0-flash-exp'
-        };
+    private transformTools(tools?: AnthropicTool[]): any[] | undefined {
+        if (!tools || tools.length === 0) return undefined;
 
-        if (modelMap[anthropicModel]) {
-            return modelMap[anthropicModel];
+        const transformedTools: any[] = [];
+
+        for (const tool of tools) {
+            // Special handling for web_search -> googleSearch grounding
+            if (tool.name === 'web_search' || tool.name === 'brave_search') {
+                transformedTools.push({
+                    googleSearch: {}
+                });
+                continue;
+            }
+
+            // Standard function calling conversion
+            const parameters = this.cleanSchema(tool.input_schema || { type: 'object', properties: {} });
+
+            transformedTools.push({
+                functionDeclarations: [{
+                    name: tool.name,
+                    description: tool.description || '',
+                    parameters
+                }]
+            });
         }
 
-        if (anthropicModel.startsWith('gemini-')) {
-            return anthropicModel;
-        }
-
-        return 'gemini-1.5-pro';
+        return transformedTools;
     }
 
     /**
-     * Call Google Gemini API
+     * Get thinking config for models that support extended thinking
+     */
+    private getThinkingConfig(model: string): { thinkingBudget: number } | null {
+        // Models that support thinking/reasoning
+        // Currently disabling specific checks to rely on the caller to provide mapped model
+        // Logic should be: if model is gemini-3-flash, return null.
+        // If the mapped model *was* a thinking model, we might want to enable it, but only if supported.
+
+        // For now, Gemini 3 Flash does not support thinking config publically via this API without errors
+        // unless specific conditions are met.
+        // Returning null for now to be safe as we are forcing gemini-3-flash.
+        return null;
+
+        /* Original Logic kept for reference if needed later for other models
+        if (model.includes('thinking') ||
+            model.includes('opus') ||
+            model.includes('o1') ||
+            model.includes('o3')) {
+            return {
+                thinkingBudget: 8192 // Default thinking budget
+            };
+        }
+        return null;
+        */
+    }
+
+    /**
+     * Recursively clean JSON schema to be compatible with Gemini API
+     */
+    private cleanSchema(schema: any): any {
+        if (!schema || typeof schema !== 'object') return schema;
+
+        if (Array.isArray(schema)) {
+            return schema.map(item => this.cleanSchema(item));
+        }
+
+        const clean: any = {};
+
+        for (const [key, value] of Object.entries(schema)) {
+            // Remove explicitly unsupported fields by Gemini API
+            if (key === '$schema' ||
+                key === 'exclusiveMinimum' ||
+                key === 'exclusiveMaximum' ||
+                key === 'propertyNames' ||
+                key === 'additionalProperties') { // additionalProperties can also cause issues
+                continue;
+            }
+
+            // Convert const to enum
+            if (key === 'const') {
+                clean['enum'] = [value];
+                continue;
+            }
+
+            // Recursively clean children
+            clean[key] = this.cleanSchema(value);
+        }
+
+        return clean;
+    }
+
+    /**
+     * Map Anthropic model to Google model
+     */
+    private mapModel(anthropicModel: string): string {
+        // Using gemini-3-flash for all models currently as it is the only confirmed working model
+        logger.info(`Mapping model: ${anthropicModel} -> gemini-3-flash`);
+        return 'gemini-3-flash';
+    }
+
+
+
+    /**
+     * Get Project ID by calling loadCodeAssist or onboardUser
+     */
+    private async getProjectId(token: string): Promise<string> {
+        if (process.env.JANUS_ANTIGRAVITY_PROJECT_ID) {
+            return process.env.JANUS_ANTIGRAVITY_PROJECT_ID;
+        }
+        if (this.projectId) return this.projectId;
+
+        const headers = {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            // Headers based on magi-core/antigravity-adapter
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36',
+            'X-Goog-Api-Client': 'google-cloud-sdk vscode_cloudshelleditor/0.1',
+            'Client-Metadata': '{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}'
+        };
+
+        try {
+            // Try loadCodeAssist first
+            const loadUrl = `${config.google.apiUrl}/v1internal:loadCodeAssist`;
+            logger.info(`Fetching Project ID from ${loadUrl}`);
+
+            const loadResp = await fetch(loadUrl, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ metadata: { ideType: 'IDE_UNSPECIFIED', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' } })
+            });
+
+            if (loadResp.ok) {
+                const data = await loadResp.json();
+                const pid = typeof data.cloudaicompanionProject === 'string'
+                    ? data.cloudaicompanionProject
+                    : data.cloudaicompanionProject?.id;
+
+                if (pid) {
+                    this.projectId = pid;
+                    logger.info(`Resolved Project ID: ${pid}`);
+                    return pid;
+                }
+            }
+
+            // Fallback to onboardUser if loadCodeAssist fails or returns no ID
+            logger.info('loadCodeAssist failed or returned no ID, trying onboardUser...');
+            const onboardUrl = `${config.google.apiUrl}/v1internal:onboardUser`;
+            const onboardResp = await fetch(onboardUrl, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ metadata: { ideType: 'IDE_UNSPECIFIED', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' } })
+            });
+
+            if (onboardResp.ok) {
+                const data = await onboardResp.json();
+                const pid = typeof data.cloudaicompanionProject === 'string'
+                    ? data.cloudaicompanionProject
+                    : data.cloudaicompanionProject?.id;
+
+                if (pid) {
+                    this.projectId = pid;
+                    logger.info(`Onboarded Project ID: ${pid}`);
+                    return pid;
+                }
+            }
+
+            throw new Error('Failed to retrieve Project ID from Antigravity API');
+        } catch (error) {
+            logger.error('Error resolving Project ID:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Call Google Gemini API (via Antigravity internal endpoint)
      */
     async callAPI(googleReq: GoogleRequest, anthropicModel: string, token: string, stream: boolean = true): Promise<Response> {
         let timeoutId: NodeJS.Timeout | undefined;
@@ -131,16 +323,64 @@ export class GoogleTranspiler {
             timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
 
             const model = this.mapModel(anthropicModel);
-            const endpoint = stream ? 'streamGenerateContent' : 'generateContent';
-            const url = `${config.google.apiUrl}/v1/models/${model}:${endpoint}`;
+
+            // Get Project ID (handled internally now)
+            const projectId = await this.getProjectId(token);
+
+            // Use Antigravity internal endpoint
+            // streamGenerateContent causes 404, using generateContent with alt=sse for streaming
+            const endpoint = 'generateContent';
+            const url = `${config.google.apiUrl}/v1internal:${endpoint}${stream ? '?alt=sse' : ''}`;
+
+            const headers = {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Antigravity/1.15.8 Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36',
+                'X-Goog-Api-Client': 'google-cloud-sdk vscode_cloudshelleditor/0.1',
+                'Client-Metadata': '{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}'
+            };
+
+            // Wrap request body for Antigravity
+            const requestBody: any = {
+                // model: model, // Removed as per magi-core impl
+                contents: googleReq.contents,
+                generationConfig: googleReq.generationConfig,
+            };
+
+            // Temporarily disable system_instruction if causing issues, but usually fine
+            // Note: Antigravity expects snake_case for system_instruction in wrapped body?
+            // Let's assume standard object is fine inside 'request' payload, but double check casing.
+            // magi-core uses "systemInstruction" (camelCase) in request_payload.
+            if (googleReq.systemInstruction) {
+                requestBody.systemInstruction = googleReq.systemInstruction;
+            }
+            if (googleReq.tools) {
+                requestBody.tools = googleReq.tools;
+            }
+            if (googleReq.thinkingConfig) {
+                // Check if the target Google model supports thinking
+                if (this.getThinkingConfig(model)) {
+                    requestBody.thinkingConfig = googleReq.thinkingConfig;
+                } else {
+                    logger.warn(`Dropping thinkingConfig for model ${model} (mapped from ${anthropicModel})`);
+                }
+            }
+
+            const wrappedBody = {
+                project: projectId,
+                model: model,
+                request: requestBody,
+                requestType: 'chat', // Try 'chat' instead of 'agent'
+                userAgent: 'antigravity',
+                requestId: `agent-${randomUUID()}`,
+            };
+
+            logger.info(`Calling Antigravity API: ${url} (Project: ${projectId}, Model: ${model})`);
 
             const response = await fetch(url, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify(googleReq),
+                headers,
+                body: JSON.stringify(wrappedBody),
                 signal: controller.signal
             });
 
@@ -176,6 +416,40 @@ export class GoogleTranspiler {
     /**
      * Convert Google Gemini non-streaming response to Anthropic format
      */
+    async convertResponse(response: Response, model: string): Promise<any> {
+        const data = await response.json();
+
+        // Unwrap response from Antigravity envelope
+        // Standard shape: { response: { candidates: [...] } }
+        const innerResponse = data.response || data; // Fallback if not wrapped
+
+        const content = innerResponse.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        const finishReason = innerResponse.candidates?.[0]?.finishReason;
+        const stopReason = this.mapFinishReason(finishReason);
+
+        return {
+            id: `msg_${Math.random().toString(36).substring(2, 15)}`,
+            type: 'message',
+            role: 'assistant',
+            content: [
+                {
+                    type: 'text',
+                    text: content
+                }
+            ],
+            model: model,
+            stop_reason: stopReason,
+            stop_sequence: stopReason === 'stop_sequence' ? null : null,
+            usage: {
+                input_tokens: innerResponse.usageMetadata?.promptTokenCount || 0,
+                output_tokens: innerResponse.usageMetadata?.candidatesTokenCount || 0
+            }
+        };
+    }
+
+    /**
+     * Map Gemini finish reason to Anthropic stop reason
+     */
     private mapFinishReason(finishReason: string | undefined): string | null {
         if (!finishReason) return null;
         switch (finishReason) {
@@ -197,45 +471,16 @@ export class GoogleTranspiler {
     }
 
     /**
-     * Convert Google Gemini non-streaming response to Anthropic format
-     */
-    async convertResponse(response: Response, model: string): Promise<any> {
-        const data = await response.json();
-        const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        const finishReason = data.candidates?.[0]?.finishReason;
-        const stopReason = this.mapFinishReason(finishReason);
-
-        return {
-            id: `msg_${Math.random().toString(36).substring(2, 15)}`,
-            type: 'message',
-            role: 'assistant',
-            content: [
-                {
-                    type: 'text',
-                    text: content
-                }
-            ],
-            model: model,
-            stop_reason: stopReason,
-            stop_sequence: stopReason === 'stop_sequence' ? null : null, // stop_sequence value not easily available in standard finishReason
-            usage: {
-                input_tokens: data.usageMetadata?.promptTokenCount || 0,
-                output_tokens: data.usageMetadata?.candidatesTokenCount || 0
-            }
-        };
-    }
-
-    /**
      * Convert Google SSE stream to Anthropic format
      */
-    async *convertStreamResponse(response: Response, model: string): AsyncGenerator<string> {
+    async * convertStreamResponse(response: Response, model: string): AsyncGenerator<string> {
         if (!response.body) {
             throw new ProviderError('No response body from Google', 'google');
         }
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
-        
+
         // Generate message ID
         const messageId = `msg_${Math.random().toString(36).substring(2, 15)}`;
 
@@ -268,8 +513,13 @@ export class GoogleTranspiler {
         const parser = createParser({
             onEvent: (event: EventSourceMessage) => {
                 try {
+                    // SSE data is typically a JSON string
+                    // For Antigravity, it might be { response: ... } or just ...
                     const parsed = JSON.parse(event.data);
-                    const candidates = parsed.candidates;
+
+                    // Unwrap response
+                    const innerResponse = parsed.response || parsed;
+                    const candidates = innerResponse.candidates;
 
                     if (candidates && candidates.length > 0) {
                         const content = candidates[0].content;
@@ -305,7 +555,7 @@ export class GoogleTranspiler {
                                     stop_sequence: null
                                 },
                                 usage: {
-                                    output_tokens: parsed.usageMetadata?.candidatesTokenCount || 0
+                                    output_tokens: innerResponse.usageMetadata?.candidatesTokenCount || 0
                                 }
                             })}\n\n`);
 
@@ -324,7 +574,7 @@ export class GoogleTranspiler {
         try {
             while (true) {
                 const { done, value } = await reader.read();
-                
+
                 if (value) {
                     parser.feed(decoder.decode(value, { stream: !done }));
                 }

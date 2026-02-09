@@ -44,7 +44,7 @@ export const handleMessages = async (req: Request, res: Response) => {
                 type: 'error',
                 error: {
                     type: 'internal_server_error',
-                    message: 'Internal server error occurred during streaming'
+                    message: (error instanceof Error ? error.message : 'Internal server error occurred during streaming')
                 }
             })}\n\n`);
             res.end();

@@ -5,7 +5,7 @@ import { openaiAuth } from './auth/openai.js';
 import { googleAuth } from './auth/google.js';
 import { logger } from './utils/logger.js';
 import { tokenStore } from './auth/token-store.js';
-import { config } from './config.js';
+import { config, validateProviderConfig } from './config.js';
 
 const program = new Command();
 
@@ -29,9 +29,11 @@ authCommand
     .description('Authenticate with OpenAI (Codex)')
     .action(async () => {
         try {
+            validateProviderConfig('openai');
             await openaiAuth.login();
+            process.exit(0);
         } catch (error) {
-            logger.error('Authentication failed:', error);
+            logger.error('Authentication failed:', error instanceof Error ? error.message : error);
             process.exit(1);
         }
     });
@@ -41,9 +43,11 @@ authCommand
     .description('Authenticate with Google (Antigravity)')
     .action(async () => {
         try {
+            validateProviderConfig('google');
             await googleAuth.login();
+            process.exit(0);
         } catch (error) {
-            logger.error('Authentication failed:', error);
+            logger.error('Authentication failed:', error instanceof Error ? error.message : error);
             process.exit(1);
         }
     });
@@ -79,6 +83,7 @@ program
         }
 
         console.log('\nRun "claude-gateway auth <provider>" to authenticate.');
+        process.exit(0);
     });
 
 program.parse();

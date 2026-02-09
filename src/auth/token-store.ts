@@ -1,5 +1,6 @@
-import { promises as fs } from 'fs';
-import { dirname } from 'path';
+import { promises as fs, readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { dirname, join } from 'path';
+import { homedir } from 'os';
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 import { logger } from '../utils/logger.js';
 
@@ -13,16 +14,42 @@ interface TokenData {
 export class TokenStore {
     private encryptionKey: Buffer;
 
-    constructor(password: string | undefined = process.env.CSG_ENCRYPTION_KEY) {
-        if (!password || password === 'default-key-change-me') {
-            throw new Error('Fatal: Secure encryption key not configured.');
+    constructor(password?: string, salt?: string) {
+        const configDir = join(homedir(), '.csg');
+        const keyPath = join(configDir, 'encryption.key');
+        
+        if (!existsSync(configDir)) {
+            mkdirSync(configDir, { recursive: true });
         }
-        // Derive a 32-byte key from password
-        const salt = process.env.CSG_SALT;
-        if (!salt || salt === 'default-salt') {
-            throw new Error('Fatal: Secure salt not configured. Set CSG_SALT environment variable.');
+
+        password = password || process.env.JANUS_ENCRYPTION_KEY;
+        salt = salt || process.env.JANUS_SALT;
+
+        if (!password || !salt) {
+            if (existsSync(keyPath)) {
+                try {
+                    const savedConfig = JSON.parse(readFileSync(keyPath, 'utf8'));
+                    password = password || savedConfig.password;
+                    salt = salt || savedConfig.salt;
+                } catch (e) {
+                    logger.warn('Failed to read encryption key file, generating new one.');
+                }
+            }
+
+            if (!password || !salt) {
+                password = password || randomBytes(32).toString('hex');
+                salt = salt || randomBytes(16).toString('hex');
+                
+                try {
+                    writeFileSync(keyPath, JSON.stringify({ password, salt }), 'utf8');
+                    logger.info(`Generated new encryption key and saved to ${keyPath}`);
+                } catch (e) {
+                    logger.error('Failed to save generated encryption key:', e);
+                }
+            }
         }
-        this.encryptionKey = scryptSync(password, salt, 32);
+
+        this.encryptionKey = scryptSync(password!, salt!, 32);
     }
 
     private encrypt(data: string): string {
