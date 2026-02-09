@@ -44,7 +44,7 @@ interface GoogleRequest {
     tools?: any[];
     thinkingConfig?: {
         thinkingBudget?: number;
-        thinkingLevel?: number;
+        thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high';
         includeThoughts?: boolean;
     };
 }
@@ -183,12 +183,12 @@ export class GoogleTranspiler {
     /**
      * Get thinking config for models that support extended thinking
      */
-    private getThinkingConfig(model: string): { thinkingLevel?: number, thinkingBudget?: number, includeThoughts?: boolean } | null {
+    private getThinkingConfig(model: string): { thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high', thinkingBudget?: number, includeThoughts?: boolean } | null {
         // Models that support thinking/reasoning
         // Check for Google Gemini model identifiers (gemini, flash, 3)
         if (model.includes('gemini') && (model.includes('flash') || model.includes('3'))) {
             return {
-                thinkingLevel: 2, // Default thinking level
+                thinkingLevel: 'high', // Default thinking level
                 includeThoughts: true
             };
         }
